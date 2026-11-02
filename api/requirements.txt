@@ -1,0 +1,3 @@
+fastapi
+groq
+python-multipart
