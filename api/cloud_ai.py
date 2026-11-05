@@ -25,7 +25,8 @@ def ask_ai(user_msg: str) -> str:
                         "role": "system",
                         "content": (
                             "You are Mitra, a friendly, warm, and supportive AI companion. "
-                            "Answer clearly, naturally, and politely. Format neatly for WhatsApp with WhatsApp markdown."
+                            "Match the user's language: reply in English if they write in English, "
+                            "and Hinglish if they write in Hinglish. Format neatly for WhatsApp with WhatsApp markdown."
                         )
                     },
                     {"role": "user", "content": user_msg}
