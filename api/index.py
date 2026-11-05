@@ -211,7 +211,22 @@ IMPORTANT GUIDELINES:
             return f"Arre boss, thoda technical hiccup aa gaya ({err_msg[:60]}). Thodi der mein dobara try karna!"
 
 
+@app.middleware("http")
+async def vercel_routing_middleware(request: Request, call_next):
+    """Normalize paths rewritten by Vercel serverless functions."""
+    matched = request.headers.get("x-matched-path")
+    if matched:
+        request.scope["path"] = matched
+    elif request.scope.get("path") in ["/api/index", "/api/index/"]:
+        request.scope["path"] = "/"
+    elif request.scope.get("path", "").startswith("/api/index/"):
+        request.scope["path"] = request.scope["path"][len("/api/index"):]
+    return await call_next(request)
+
+
 @app.get("/")
+@app.get("/api/index")
+@app.get("/api/index/")
 async def home():
     """Web preview page for browser testing and server health checking."""
     html_content = f"""<!DOCTYPE html>
@@ -321,6 +336,7 @@ async def home():
 
 
 @app.post("/api/chat")
+@app.post("/api/index/api/chat")
 async def web_chat(request: ChatRequest):
     """API endpoint for web chat testing."""
     user_msg = request.message
@@ -331,6 +347,8 @@ async def web_chat(request: ChatRequest):
 
 @app.get("/whatsapp")
 @app.get("/webhook")
+@app.get("/api/index/whatsapp")
+@app.get("/api/index/webhook")
 async def verify_webhook(request: Request):
     """Handles Meta WhatsApp Cloud API verification handshake or status probe."""
     params = request.query_params
@@ -393,6 +411,8 @@ async def handle_meta_whatsapp(request: Request):
 @app.post("/whatsapp")
 @app.post("/api/whatsapp")
 @app.post("/webhook")
+@app.post("/api/index/whatsapp")
+@app.post("/api/index/webhook")
 async def whatsapp_webhook(request: Request):
     """
     Primary WhatsApp Webhook Endpoint.
@@ -465,6 +485,8 @@ async def whatsapp_webhook(request: Request):
 
 
 @app.post("/")
+@app.post("/api/index")
+@app.post("/api/index/")
 async def root_post_fallback(request: Request):
     """
     Fallback POST handler for root URL '/'.
