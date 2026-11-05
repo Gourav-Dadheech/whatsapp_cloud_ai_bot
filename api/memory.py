@@ -59,8 +59,8 @@ def save_memory(user_id: str, role: str, content: str):
     """Save message to memory (keeping last 50 turns). Saves to Upstash Redis and local cache."""
     history = get_memory(user_id)
 
-    # Cap individual memory turn length to 600 chars to keep AI prompt fast & focused
-    stored_text = content[:600] if len(content) > 600 else content
+    # Cap individual memory turn length to 1200 chars to keep rich study & chat context
+    stored_text = content[:1200] if len(content) > 1200 else content
     history.append({"role": role, "content": stored_text})
 
     # Keep last 50 messages (25 user + 25 assistant turns) for deep long-term context
