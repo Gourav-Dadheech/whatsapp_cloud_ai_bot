@@ -42,24 +42,26 @@ async def download_media(media_url: str) -> tuple[bytes, str]:
 
 
 async def transcribe_audio(audio_bytes: bytes, filename: str = "voice.ogg") -> str:
-    """Transcribes WhatsApp voice notes using Groq Whisper Large-v3 in ~300ms."""
+    """Transcribes WhatsApp voice notes using Groq Whisper in ~300ms."""
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         return ""
     client = AsyncGroq(api_key=api_key)
-    try:
-        transcription = await asyncio.wait_for(
-            client.audio.transcriptions.create(
-                file=(filename, audio_bytes),
-                model="whisper-large-v3",
-                response_format="json"
-            ),
-            timeout=10.0
-        )
-        return transcription.text.strip()
-    except Exception as e:
-        print(f"Whisper transcription error: {e}")
-        return ""
+    for model_name in ["whisper-large-v3-turbo", "whisper-large-v3"]:
+        try:
+            transcription = await asyncio.wait_for(
+                client.audio.transcriptions.create(
+                    file=(filename, audio_bytes),
+                    model=model_name,
+                    response_format="json"
+                ),
+                timeout=10.0
+            )
+            return transcription.text.strip()
+        except Exception as e:
+            print(f"Whisper model {model_name} error: {e}")
+            continue
+    return ""
 
 
 async def analyze_image_with_vision(image_bytes: bytes, content_type: str, caption: str = "", user_id: str = "") -> str:
@@ -158,17 +160,24 @@ IMPORTANT GUIDELINES:
         messages.append({"role": item["role"], "content": item["content"]})
     messages.append({"role": "user", "content": user_msg})
 
-    preferred_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
-    fallback_model = "llama-3.1-8b-instant"
+    models_to_try = [
+        os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
+        "openai/gpt-oss-20b",
+        "qwen/qwen3.8-27b"
+    ]
+    # Remove duplicates while preserving order
+    models_to_try = list(dict.fromkeys(models_to_try))
 
     client = AsyncGroq(api_key=api_key)
 
-    try:
-        # First attempt: Try flagship Llama 3.3 70B (State-of-the-art reasoning)
+    answer = None
+    last_err = None
+
+    for model_name in models_to_try:
         try:
             response = await asyncio.wait_for(
                 client.chat.completions.create(
-                    model=preferred_model,
+                    model=model_name,
                     messages=messages,
                     temperature=0.7,
                     max_tokens=700
@@ -176,39 +185,27 @@ IMPORTANT GUIDELINES:
                 timeout=11.0
             )
             answer = response.choices[0].message.content.strip()
-        except Exception as primary_err:
-            if preferred_model != fallback_model:
-                print(f"Primary model {preferred_model} issue ({primary_err}), falling back to {fallback_model}...")
-                response = await asyncio.wait_for(
-                    client.chat.completions.create(
-                        model=fallback_model,
-                        messages=messages,
-                        temperature=0.7,
-                        max_tokens=600
-                    ),
-                    timeout=9.0
-                )
-                answer = response.choices[0].message.content.strip()
-            else:
-                raise primary_err
+            if answer:
+                break
+        except Exception as e:
+            print(f"Model {model_name} error: {e}")
+            last_err = e
+            continue
 
-        # Save successful turn to memory
-        save_memory(user_id, "user", user_msg)
-        save_memory(user_id, "assistant", answer)
-
-        return answer
-
-    except asyncio.TimeoutError:
-        return "⏳ Response timeout. Network is slow right now, please try sending your message again!"
-    except Exception as e:
-        err_msg = str(e)
-        print(f"Groq API Error: {err_msg}")
+    if not answer:
+        err_msg = str(last_err) if last_err else "All candidate models failed"
         if "401" in err_msg or "invalid_api_key" in err_msg:
             return "⚠️ *Groq API Key Invalid*: Please check that your `GROQ_API_KEY` is active and correct."
         elif "429" in err_msg or "rate_limit" in err_msg:
             return "⏳ *Mitra is busy right now!* Please send your message again in a few moments."
         else:
             return f"Arre boss, thoda technical hiccup aa gaya ({err_msg[:60]}). Thodi der mein dobara try karna!"
+
+    # Save successful turn to memory
+    save_memory(user_id, "user", user_msg)
+    save_memory(user_id, "assistant", answer)
+
+    return answer
 
 
 @app.middleware("http")
@@ -262,10 +259,10 @@ async def home():
         </div>
     </div>
     <div class="info-bar">
-        ⚡ <b>Mitra Supercharged</b>: 🧠 Llama-3.3 70B | 🎙️ Groq Whisper v3 Voice Notes | 📷 Llama-3.2 Vision
+        ⚡ <b>Mitra Supercharged</b>: 🧠 OpenAI GPT-OSS 120B Flagship | 🎙️ Groq Whisper v3 Voice Notes
     </div>
     <div class="chat-container" id="chat-container">
-        <div class="message bot-message">🤖 *{BOT_NAME}*:\n\nNamaste! I am Mitra, supercharged with Llama 3.3 70B, Voice Notes & Vision support. Send a message, voice note, or photo on WhatsApp!</div>
+        <div class="message bot-message">🤖 *{BOT_NAME}*:\n\nNamaste! I am Mitra, supercharged with OpenAI GPT-OSS 120B and Voice Notes support. Send a message or voice note on WhatsApp!</div>
     </div>
     <div class="input-area">
         <input type="text" id="message-input" placeholder="Type a message or 'help'..." onkeypress="handleKeyPress(event)" autofocus>
