@@ -79,20 +79,29 @@ async def analyze_image_with_vision(image_bytes: bytes, content_type: str, capti
     if not api_key:
         return "⚠️ GROQ_API_KEY is not set."
 
+    # Ensure valid image MIME type
+    if not content_type or not content_type.startswith("image/"):
+        content_type = "image/jpeg"
+
     client = AsyncGroq(api_key=api_key)
     b64_image = base64.b64encode(image_bytes).decode("utf-8")
     data_url = f"data:{content_type};base64,{b64_image}"
 
-    question = caption.strip() if caption.strip() and caption.strip().lower() != "hello" else "What is this image? Describe what you see in detail."
+    question = caption.strip() if caption.strip() and caption.strip().lower() != "hello" else "What apps, text, or objects are in this image? Describe accurately."
 
-    prompt_text = (
-        f"You are Mitra AI, a helpful, friendly AI companion on WhatsApp. "
-        f"Examine this image carefully and answer the user's question clearly. "
-        f"Identify any apps, logos, objects, or text shown in the picture accurately. "
-        f"Use clean WhatsApp formatting (*bold*, bullet points). "
-        f"Match the language: reply in English if asked in English, or in Hinglish if asked in Hinglish.\n\n"
-        f"User question about this image: {question}"
-    )
+    prompt_text = f"""You are Mitra AI, an expert computer vision assistant on WhatsApp.
+
+CRITICAL INSTRUCTIONS FOR IMAGE RECOGNITION:
+1. Examine this photo/screenshot carefully.
+2. If this is a computer or laptop screen / taskbar:
+   - Carefully distinguish Windows (Windows 10/11 taskbar, Windows Start icon, Microsoft Store shopping bag logo, Lenovo Vantage, File Explorer folder, Edge, etc.) from macOS.
+   - Do NOT guess macOS or Safari unless an Apple logo or Safari compass icon is explicitly visible.
+   - Accurately recognize Windows and OEM apps like Microsoft Store (white shopping bag icon with Microsoft colors) and Lenovo Vantage (blue cube / letter L icon).
+3. Directly answer the user's question with precise, factual details.
+4. Format using clean WhatsApp markdown (*bold*, bullet points •).
+5. Match language: English if asked in English, or natural Hinglish if asked in Hinglish.
+
+User's question: {question}"""
 
     try:
         response = await asyncio.wait_for(
@@ -107,6 +116,7 @@ async def analyze_image_with_vision(image_bytes: bytes, content_type: str, capti
                         ]
                     }
                 ],
+                temperature=0.2,
                 max_tokens=700
             ),
             timeout=14.0
