@@ -23,6 +23,9 @@ def _save_cache():
     except Exception:
         pass
 
+MAX_MEMORY_MESSAGES = int(os.getenv("MAX_MEMORY_MESSAGES", "50"))
+
+
 def _redis_config():
     """Retrieve Upstash Redis REST credentials from environment if available."""
     url = os.getenv("UPSTASH_REDIS_REST_URL")
@@ -53,15 +56,15 @@ def get_memory(user_id: str):
     return conversation_memory.get(user_id, [])
 
 def save_memory(user_id: str, role: str, content: str):
-    """Save message to memory (keeping last 16 turns). Saves to Upstash Redis and local cache."""
+    """Save message to memory (keeping last 50 turns). Saves to Upstash Redis and local cache."""
     history = get_memory(user_id)
 
     # Cap individual memory turn length to 600 chars to keep AI prompt fast & focused
     stored_text = content[:600] if len(content) > 600 else content
     history.append({"role": role, "content": stored_text})
 
-    # Keep last 16 messages (8 user + 8 assistant turns)
-    history = history[-16:]
+    # Keep last 50 messages (25 user + 25 assistant turns) for deep long-term context
+    history = history[-MAX_MEMORY_MESSAGES:]
 
     # Save to local cache
     conversation_memory[user_id] = history
