@@ -34,9 +34,12 @@ def save_memory(user_id: str, role: str, content: str):
     if user_id not in conversation_memory:
         conversation_memory[user_id] = []
 
+    # Cap individual memory turn length to 500 chars to keep AI prompt lightning fast
+    stored_text = content[:500] if len(content) > 500 else content
+
     conversation_memory[user_id].append({
         "role": role,
-        "content": content
+        "content": stored_text
     })
 
     # Keep only the last 10 messages (5 user + 5 assistant turns) to maintain speed and focus

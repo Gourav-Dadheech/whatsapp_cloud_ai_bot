@@ -28,6 +28,37 @@ class ChatRequest(BaseModel):
     user_id: str = "web-user"
 
 
+def add_twilio_messages(twilio_resp: MessagingResponse, text: str, max_chars: int = 1500):
+    """Splits long text across multiple WhatsApp messages so Twilio's 1600-char limit is never exceeded."""
+    if len(text) <= max_chars:
+        twilio_resp.message(text)
+        return
+
+    paragraphs = text.split("\n\n")
+    current_chunk = ""
+    for para in paragraphs:
+        if len(current_chunk) + len(para) + 2 <= max_chars:
+            current_chunk = (current_chunk + "\n\n" + para).strip()
+        else:
+            if current_chunk:
+                twilio_resp.message(current_chunk)
+            if len(para) > max_chars:
+                lines = para.split("\n")
+                sub_chunk = ""
+                for line in lines:
+                    if len(sub_chunk) + len(line) + 1 <= max_chars:
+                        sub_chunk = (sub_chunk + "\n" + line).strip()
+                    else:
+                        if sub_chunk:
+                            twilio_resp.message(sub_chunk)
+                        sub_chunk = line
+                current_chunk = sub_chunk
+            else:
+                current_chunk = para
+    if current_chunk:
+        twilio_resp.message(current_chunk)
+
+
 async def download_media(media_url: str) -> tuple[bytes, str]:
     """Downloads media from Twilio with optional Basic Auth and direct fallback."""
     sid = os.getenv("TWILIO_ACCOUNT_SID")
@@ -191,8 +222,8 @@ IMPORTANT GUIDELINES:
     messages.append({"role": "user", "content": user_msg})
 
     models_to_try = [
-        os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
-        "openai/gpt-oss-20b",
+        os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"),
+        "openai/gpt-oss-120b",
         "qwen/qwen3.8-27b"
     ]
     # Remove duplicates while preserving order
@@ -210,9 +241,9 @@ IMPORTANT GUIDELINES:
                     model=model_name,
                     messages=messages,
                     temperature=0.7,
-                    max_tokens=700
+                    max_tokens=650
                 ),
-                timeout=11.0
+                timeout=6.5
             )
             answer = response.choices[0].message.content.strip()
             if answer:
@@ -496,7 +527,7 @@ async def whatsapp_webhook(request: Request):
             vision_answer = await analyze_image_with_vision(image_bytes, ct, caption=user_msg, user_id=user_id)
             reply_body = f"🤖 *{BOT_NAME} AI* (📷 Vision)\n━━━━━━━━━━━━━━\n{vision_answer}"
             twilio_resp = MessagingResponse()
-            twilio_resp.message(reply_body)
+            add_twilio_messages(twilio_resp, reply_body)
             return Response(content=str(twilio_resp), media_type="application/xml")
         except Exception as e:
             err_str = str(e)
@@ -514,10 +545,10 @@ async def whatsapp_webhook(request: Request):
 
     answer = await generate_mitra_reply(user_msg=user_msg, user_id=user_id, user_name=user_name)
 
-    # Format response for Twilio WhatsApp XML (TwiML)
+    # Format response for Twilio WhatsApp XML (TwiML) with 1600-char safety chunking
     twilio_resp = MessagingResponse()
     reply_body = f"🤖 *{BOT_NAME} AI*\n━━━━━━━━━━━━━━\n{prefix}{answer}"
-    twilio_resp.message(reply_body)
+    add_twilio_messages(twilio_resp, reply_body)
 
     return Response(content=str(twilio_resp), media_type="application/xml")
 
