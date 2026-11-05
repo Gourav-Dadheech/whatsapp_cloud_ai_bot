@@ -38,20 +38,21 @@ class ChatRequest(BaseModel):
     user_id: str = "web-user"
 
 
-def add_twilio_messages(twilio_resp: MessagingResponse, text: str, max_chars: int = 1500):
-    """Splits long text across multiple WhatsApp messages so Twilio's 1600-char limit is never exceeded."""
+def add_twilio_messages(twilio_resp: MessagingResponse, text: str, max_chars: int = 1550):
+    """Splits long text across numbered WhatsApp messages (Part 1/2, Part 2/2) so order is always clear."""
     if len(text) <= max_chars:
         twilio_resp.message(text)
         return
 
     paragraphs = text.split("\n\n")
+    chunks = []
     current_chunk = ""
     for para in paragraphs:
         if len(current_chunk) + len(para) + 2 <= max_chars:
             current_chunk = (current_chunk + "\n\n" + para).strip()
         else:
             if current_chunk:
-                twilio_resp.message(current_chunk)
+                chunks.append(current_chunk)
             if len(para) > max_chars:
                 lines = para.split("\n")
                 sub_chunk = ""
@@ -60,13 +61,29 @@ def add_twilio_messages(twilio_resp: MessagingResponse, text: str, max_chars: in
                         sub_chunk = (sub_chunk + "\n" + line).strip()
                     else:
                         if sub_chunk:
-                            twilio_resp.message(sub_chunk)
+                            chunks.append(sub_chunk)
                         sub_chunk = line
                 current_chunk = sub_chunk
             else:
                 current_chunk = para
     if current_chunk:
-        twilio_resp.message(current_chunk)
+        chunks.append(current_chunk)
+
+    total = len(chunks)
+    if total <= 1:
+        for c in chunks:
+            twilio_resp.message(c)
+        return
+
+    # Add explicit Part headers so the user always reads them in the right order
+    for idx, c in enumerate(chunks):
+        part_tag = f"📌 *(Part {idx+1}/{total})*\n"
+        if "\n" in c and "Mitra" in c.split("\n")[0]:
+            parts = c.split("\n", 1)
+            formatted_chunk = f"{parts[0]}\n{part_tag}\n{parts[1]}"
+        else:
+            formatted_chunk = f"{part_tag}\n{c}"
+        twilio_resp.message(formatted_chunk)
 
 
 def extract_text_from_pdf(pdf_bytes: bytes, max_pages: int = 15) -> tuple[str, int]:
@@ -517,7 +534,11 @@ WHATSAPP FORMATTING:
 - Use _italics_ for gentle remarks or quotes.
 - Use clean bullet points (•) and lively emojis.
 - Keep answers readable on mobile screens (avoid huge unstructured walls of text).
-- Always finish your sentences and thoughts completely."""
+- Always finish your sentences and thoughts completely.
+
+CONCISENESS & SINGLE-MESSAGE DELIVERY (VERY IMPORTANT):
+- Keep your answers well-paced and crisp (under 1,200 characters) so that your complete response fits neatly into ONE single WhatsApp message.
+- For concepts (like black holes, science, history, coding): Give an engaging 2-line intro followed by 3-4 clear structured bullet points (1., 2., 3.) and a quick conclusion. Never ramble or write long essays that get split across messages!"""
 
     messages = [{"role": "system", "content": system_prompt}]
 
@@ -567,6 +588,8 @@ Use the live search results above to provide a fact-checked, up-to-date answer w
     answer = None
     last_err = None
 
+    target_tokens = 950 if (active_doc and active_doc.get("extracted_text")) else 550
+
     for model_name in models_to_try:
         try:
             response = await asyncio.wait_for(
@@ -574,9 +597,9 @@ Use the live search results above to provide a fact-checked, up-to-date answer w
                     model=model_name,
                     messages=messages,
                     temperature=0.7,
-                    max_tokens=1400
+                    max_tokens=target_tokens
                 ),
-                timeout=10.0
+                timeout=9.0
             )
             answer = response.choices[0].message.content.strip()
             if answer:
