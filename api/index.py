@@ -254,46 +254,84 @@ def check_creator_query(msg: str) -> str | None:
     return None
 
 
-async def analyze_document_study_unit(text_content: str, doc_name: str, total_pages_or_slides: int, user_id: str = "", user_name: str = "") -> str:
-    """Analyzes college course units, PDF textbooks, and PPT slides, breaking them down into an interactive tutor guide."""
+async def analyze_document_content(
+    text_content: str,
+    doc_name: str,
+    total_pages_or_slides: int,
+    user_instruction: str = "",
+    user_id: str = "",
+    user_name: str = ""
+) -> str:
+    """
+    Intelligently analyzes any document or presentation:
+    - Exam Question Papers / Assignments: Solves questions, breaks down sections, marks, and formulas.
+    - Business / Finance / Invoices / Contracts / Reports: Extracts financials, terms, deliverables, and action items.
+    - College / School Study Units & Notes: Breaks down topics unit-by-unit with step-by-step interactive tutoring.
+    - Resumes / CVs: Analyzes qualifications, highlights strengths, and provides improvement tips.
+    - General Documents / Legal / Manuals / Articles: Provides executive summaries and actionable insights.
+    """
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         return "⚠️ GROQ_API_KEY is not set."
 
     client = AsyncGroq(api_key=api_key)
 
-    user_ctx = f" The student's name is {user_name}." if user_name else ""
-    prompt = f"""You are Mitra AI, an inspiring, empathetic, and expert college study mentor and tutor.{user_ctx}
+    has_instruction = bool(user_instruction and user_instruction.strip() and user_instruction.strip().lower() not in ["hello", "hi", "hey"])
+    instruction_prompt = (
+        f"USER'S DIRECT REQUEST / CAPTION: \"{user_instruction}\"\n"
+        "CRITICAL: You MUST prioritize and directly answer this specific user request using the document content!"
+        if has_instruction else
+        "No specific question was asked. Automatically detect the document category and provide the most relevant, helpful analysis."
+    )
 
-A college student has shared their course document / unit material with you!
-Document: {doc_name}
+    user_ctx = f" User name: {user_name}." if user_name else ""
+
+    prompt = f"""You are Mitra AI, an intelligent, empathetic, versatile, and supportive AI companion on WhatsApp.{user_ctx}
+
+A user has sent you a document:
+Document Name: {doc_name}
 Total Pages / Slides: {total_pages_or_slides}
 
-Here is the extracted text from the study material:
+{instruction_prompt}
+
+DOCUMENT TEXT EXTRACT:
 \"\"\"
-{text_content[:6500]}
+{text_content[:7000]}
 \"\"\"
 
-PLEASE STRUCTURE YOUR RESPONSE EXACTLY AS FOLLOWS FOR WHATSAPP:
-1. 🌟 *Warm Appreciation & Motivation*:
-   - Start with genuine warmth and encouragement (ChatGPT-style emotional connection: "Awesome! Super proud of your dedication to studying. Let's conquer this unit together! 📚✨").
+DOCUMENT ANALYSIS GUIDELINES:
+Carefully inspect the extracted text to determine what kind of document this is, and respond accordingly:
 
-2. 📖 *Unit & Subject Overview*:
-   - Clearly state the subject / unit / chapter title.
-   - Give a concise 2-line summary of what this unit is all about.
+1. 📝 EXAM / QUESTION PAPER / TEST / ASSIGNMENT:
+   - Identify: Subject, Examination/Class/Semester, Maximum Marks, and Time.
+   - Structure: Break down the sections (Section A, B, etc.) and main questions.
+   - Solutions & Guidance: If the user asked to solve questions (e.g. "Solve Q1", "Solve section A"), provide the complete step-by-step solution! If no question was asked, summarize the core topics tested, solve the first important question or problem as a clear example, and warmly invite them: "Which question number would you like me to solve next?"
 
-3. 🎯 *Key Topics in this Unit*:
-   - List the core topics found in this material (clean numbered list: Topic 1, Topic 2, etc.).
+2. 💼 BUSINESS / INVOICE / FINANCIAL / CONTRACT / WORK REPORT:
+   - Identify: Companies / Parties involved, Invoice/Contract dates, Total Amount / Billing figures, or Agreement scope.
+   - Executive Summary: 2-3 sentence overview of the business matter.
+   - Core Takeaways: Deliverables, terms, payment due dates, or financial metrics (bullet points).
+   - Action Items: What needs to be done next, deadlines, or critical clauses.
 
-4. 🚀 *Step 1: Deep Dive on Topic 1*:
-   - Explain *Topic 1* directly with an intuitive, crystal-clear explanation.
-   - Give an easy real-life analogy or concrete example to make it effortless to remember for exams.
-   - Highlight 1-2 important exam tips or key definitions.
+3. 📚 COLLEGE / SCHOOL STUDY UNIT OR LECTURE SLIDES (Only if actually academic study material):
+   - Identify: Subject & Unit/Chapter title.
+   - Key Topics: Numbered list of topics in this unit.
+   - Deep Dive on Topic 1: Explain the first topic clearly with an intuitive real-world analogy and exam tips.
+   - Next Step: "Reply '*Next topic*' or ask any question to continue step-by-step!"
 
-5. 💡 *Next Step*:
-   - End with: "Whenever you're ready, reply '*Next topic*' or ask any question from Topic 1, and we'll master this unit step by step!"
+4. 📄 RESUME / CV / PORTFOLIO:
+   - Candidate summary, key skills, experience highlight, and 2-3 constructive recommendations to enhance the resume.
 
-Tone: Warm, encouraging, empathetic, clear, structured. Use bolding and emojis."""
+5. 📑 GENERAL DOCUMENT / MANUAL / ARTICLE / BOOK EXCERPT:
+   - Clear executive summary, main highlights (bullet points), and answers to any questions.
+
+FORMATTING & TONE:
+- Be warm, encouraging, respectful, and clear (ChatGPT-like empathy and connection).
+- If it's a student or exam paper, cheer them on and build their confidence.
+- If it's a business document, be sharp, professional, accurate, and clear.
+- Use WhatsApp markdown (*bold* for headings and numbers, bullet points •, emojis).
+- Keep text well-structured and easy to read on mobile phones.
+- Match language: English if English, natural Hinglish if user speaks Hinglish."""
 
     models_to_try = [
         os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"),
@@ -311,7 +349,7 @@ Tone: Warm, encouraging, empathetic, clear, structured. Use bolding and emojis."
                     messages=[
                         {"role": "user", "content": prompt}
                     ],
-                    temperature=0.4,
+                    temperature=0.3,
                     max_tokens=950
                 ),
                 timeout=12.0
@@ -320,20 +358,20 @@ Tone: Warm, encouraging, empathetic, clear, structured. Use bolding and emojis."
             if answer:
                 break
         except Exception as e:
-            print(f"Document study tutor error with {model_name}: {e}")
+            print(f"Document analysis error with {model_name}: {e}")
             continue
 
     if not answer:
         answer = (
-            "📚 *Document Received!*\n\n"
-            f"I have received your study document (*{doc_name}*, {total_pages_or_slides} pages/slides).\n\n"
-            "What specific topic or question from this unit would you like me to explain first?"
+            "📄 *Document Received!*\n\n"
+            f"I have received your document (*{doc_name}*, {total_pages_or_slides} pages/slides).\n\n"
+            "What specific question or task from this document would you like me to help you with?"
         )
 
     if user_id:
-        save_memory(user_id, "user", f"[Uploaded College Document: {doc_name} ({total_pages_or_slides} pages/slides)]")
-        # Save a summary snippet to memory so subsequent questions know the context
-        save_memory(user_id, "assistant", f"[Studying Unit from {doc_name}]: {answer[:500]}")
+        caption_info = f" with caption: \"{user_instruction}\"" if has_instruction else ""
+        save_memory(user_id, "user", f"[Sent Document: {doc_name} ({total_pages_or_slides} pages/slides){caption_info}]")
+        save_memory(user_id, "assistant", f"[Document Analysis]: {answer[:500]}")
 
     return answer
 
@@ -357,10 +395,10 @@ async def generate_mitra_reply(user_msg: str, user_id: str, user_name: str = "")
     if msg_clean in ["/help", "help", "menu", "/start"]:
         name_str = f" {user_name}" if user_name else ""
         return (
-            f"Namaste{name_str}! 🙏 I am *{BOT_NAME}*, your friendly AI companion & college study buddy.\n\n"
+            f"Namaste{name_str}! 🙏 I am *{BOT_NAME}*, your friendly AI companion & smart assistant.\n\n"
             "Here is what I can do for you:\n"
             "• *Text Chat*: Smart answers with deep reasoning & warm encouragement 💡\n"
-            "• *College Tutor & Notes*: Send any *PDF* or *PPT* document — I'll break it down and teach you unit-by-unit and topic-by-topic! 📚🎓\n"
+            "• *Documents & PDFs*: Send ANY PDF or PPT (Exam Question Papers, Business Invoices, Reports, or College Units) — I analyze & answer intelligently! 📄📊\n"
             "• *Voice Notes*: Send any audio message & I will understand it (Whisper v3) 🎙️\n"
             "• *Photo Analysis*: Send images of homework, code errors, or screens (Vision) 📷\n"
             "• *Languages*: Fluent in English, natural Hinglish, and Hindi 🇮🇳\n"
@@ -381,7 +419,7 @@ async def generate_mitra_reply(user_msg: str, user_id: str, user_name: str = "")
     # Retrieve memory history
     history = get_memory(user_id)
 
-    # System prompt with ChatGPT-like warmth, creator attribution, and college tutoring
+    # System prompt with ChatGPT-like warmth, creator attribution, and versatile document intelligence
     user_context = f" The user's WhatsApp name is {user_name}." if user_name else ""
     system_prompt = f"""You are {BOT_NAME} (मित्र), a friendly, remarkably smart, empathetic, and warm AI companion on WhatsApp.{user_context}
 
@@ -391,15 +429,17 @@ CREATOR & IDENTITY (CRITICAL RULE):
 
 PERSONALITY & EMOTIONAL CONNECTION (ChatGPT-like):
 - Connect with users on an emotional level: be appreciative, encouraging, warm, kind, and supportive.
-- Praise and celebrate their efforts and curiosity genuinely (e.g., "That's a fantastic question!", "Proud of your dedication to studying!", "I'm right here with you!").
+- Praise and celebrate their efforts and curiosity genuinely (e.g., "That's a fantastic question!", "Proud of your dedication!", "I'm right here with you!").
 - Speak like a thoughtful, caring friend and mentor ("Mitra"), never like a cold robot.
 - Be patient, understanding, and positive.
 
-COLLEGE STUDY BUDDY & TUTOR:
-- You are an expert interactive college tutor.
-- When students send or ask about college course units, syllabus topics, notes, PDFs, or PPTs, guide them unit-by-unit and topic-by-topic.
-- Break down dense technical concepts with easy real-world analogies, step-by-step logic, and high-yield exam takeaways.
-- If the student asks for "next topic" or follow-up questions from their study material, continue teaching interactively with clarity.
+VERSATILE DOCUMENT & PDF INTELLIGENCE:
+- You handle all types of documents according to their true nature:
+  * Exam / Question Papers: Accurately identify subject, marks, and sections, and provide step-by-step solutions or answers for questions.
+  * Business / Invoices / Financials / Contracts: Extract parties, invoice figures, deadlines, key clauses, and action items.
+  * College Units / Notes: Guide students unit-by-unit and topic-by-topic with intuitive analogies and exam takeaways.
+  * General PDFs / PPTs / Resumes: Provide clear executive summaries and answers to any questions.
+- Never force a "college unit" structure on an exam paper, business document, or resume!
 
 LANGUAGE RULE (VERY IMPORTANT):
 - Always match the EXACT language and script the user is speaking in.
@@ -754,7 +794,7 @@ async def whatsapp_webhook(request: Request):
         if is_doc:
             try:
                 doc_bytes, detected_ct = await download_media(media_url)
-                filename = form.get("MediaFilename0") or "college_study_material"
+                filename = form.get("MediaFilename0") or "Document"
                 extracted_text = ""
                 total_items = 0
                 doc_label = "Document"
@@ -776,7 +816,7 @@ async def whatsapp_webhook(request: Request):
                             extracted_text = doc_bytes.decode("utf-8", errors="ignore")[:7000]
                         except Exception:
                             pass
-                    doc_label = "Course Presentation"
+                    doc_label = "Presentation / Document"
                 else:
                     try:
                         extracted_text = doc_bytes.decode("utf-8", errors="ignore")[:7000]
@@ -788,21 +828,22 @@ async def whatsapp_webhook(request: Request):
                 if not extracted_text.strip():
                     twilio_resp = MessagingResponse()
                     twilio_resp.message(
-                        f"🤖 *{BOT_NAME} AI* (📚 College Study Buddy)\n━━━━━━━━━━━━━━\n"
+                        f"🤖 *{BOT_NAME} AI* (📑 Document Insights)\n━━━━━━━━━━━━━━\n"
                         f"I received your file (*{filename}*), but couldn't read extractable text from it.\n\n"
-                        "💡 *Tip*: If this is a scanned/photocopied PDF or handwritten note, simply send photos/screenshots of the pages directly! "
-                        "My vision system will read the diagrams, equations, and handwritten notes easily. 📷✨"
+                        "💡 *Tip*: If this is a scanned/photocopied PDF, handwritten question paper, or photo, simply send photos/screenshots of the pages directly! "
+                        "My vision system will analyze the questions, diagrams, and handwriting accurately. 📷✨"
                     )
                     return Response(content=str(twilio_resp), media_type="application/xml")
 
-                study_answer = await analyze_document_study_unit(
+                analysis_answer = await analyze_document_content(
                     text_content=extracted_text,
                     doc_name=filename,
                     total_pages_or_slides=total_items,
+                    user_instruction=user_msg,
                     user_id=user_id,
                     user_name=user_name
                 )
-                reply_body = f"🤖 *{BOT_NAME} AI* (📚 {doc_label} Tutor)\n━━━━━━━━━━━━━━\n{study_answer}"
+                reply_body = f"🤖 *{BOT_NAME} AI* (📑 {doc_label})\n━━━━━━━━━━━━━━\n{analysis_answer}"
                 twilio_resp = MessagingResponse()
                 add_twilio_messages(twilio_resp, reply_body)
                 return Response(content=str(twilio_resp), media_type="application/xml")
