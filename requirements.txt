@@ -5,3 +5,4 @@ twilio
 python-multipart
 httpx
 pypdf
+ddgs

@@ -19,9 +19,15 @@ if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
 try:
-    from memory import get_memory, save_memory, clear_memory
+    from memory import (
+        get_memory, save_memory, clear_memory,
+        get_active_document, save_active_document, clear_active_document
+    )
 except ImportError:
-    from api.memory import get_memory, save_memory, clear_memory
+    from api.memory import (
+        get_memory, save_memory, clear_memory,
+        get_active_document, save_active_document, clear_active_document
+    )
 
 app = FastAPI(title="Mitra WhatsApp AI Bot")
 
@@ -254,6 +260,60 @@ def check_creator_query(msg: str) -> str | None:
     return None
 
 
+def perform_web_search(query: str, max_results: int = 4) -> str:
+    """Fetches real-time web search results using ddgs with instant answer fallback."""
+    results = []
+    # 1. Try DDGS
+    try:
+        from ddgs import DDGS
+        with DDGS() as ddgs:
+            for r in ddgs.text(query, max_results=max_results):
+                title = r.get("title", "").strip()
+                snippet = r.get("body", "").strip()
+                if title and snippet:
+                    results.append(f"• *{title}*: {snippet}")
+    except Exception as e:
+        print(f"DDGS web search error: {e}")
+
+    # 2. Instant Answer Fallback
+    if not results:
+        try:
+            import urllib.parse
+            url = f"https://api.duckduckgo.com/?q={urllib.parse.quote(query)}&format=json&no_html=1&skip_disambig=1"
+            with httpx.Client(timeout=4.0) as client:
+                resp = client.get(url)
+                data = resp.json()
+                abstract = data.get("AbstractText", "").strip()
+                if abstract:
+                    results.append(f"• *Summary*: {abstract}")
+                for t in data.get("RelatedTopics", [])[:3]:
+                    if isinstance(t, dict) and t.get("Text"):
+                        results.append(f"• {t['Text']}")
+        except Exception as e:
+            print(f"Instant search fallback error: {e}")
+
+    return "\n".join(results)
+
+
+def should_search_web(msg: str) -> bool:
+    """Determines if the user message requires real-time web browsing."""
+    m = msg.strip().lower()
+
+    if m.startswith(("/search", "search:", "google:", "browse:")):
+        return True
+
+    search_indicators = [
+        "search the web", "search online", "search google", "browse online",
+        "latest news", "breaking news", "today news", "today's news", "aaj ki news",
+        "current weather", "weather today", "weather in", "mausam kaisa", "barish hogi",
+        "live score", "match score", "who won", "kisne jeeta", "current score", "ipl score",
+        "latest price", "stock price", "price of", "crypto price", "gold rate", "petrol rate",
+        "timetable", "exam date", "result declared", "cutoff 2026", "cutoff 2025",
+        "what happened today", "kya hua aaj", "today headlines"
+    ]
+    return any(indicator in m for indicator in search_indicators)
+
+
 async def analyze_document_content(
     text_content: str,
     doc_name: str,
@@ -350,9 +410,9 @@ FORMATTING & TONE:
                         {"role": "user", "content": prompt}
                     ],
                     temperature=0.3,
-                    max_tokens=950
+                    max_tokens=1800
                 ),
-                timeout=12.0
+                timeout=14.0
             )
             answer = response.choices[0].message.content.strip()
             if answer:
@@ -370,8 +430,11 @@ FORMATTING & TONE:
 
     if user_id:
         caption_info = f" with caption: \"{user_instruction}\"" if has_instruction else ""
+        # 1. Store the full document in Active Document Memory for multi-turn Q&A follow-ups!
+        save_active_document(user_id, doc_name, total_pages_or_slides, text_content)
+        # 2. Record conversation turn
         save_memory(user_id, "user", f"[Sent Document: {doc_name} ({total_pages_or_slides} pages/slides){caption_info}]")
-        save_memory(user_id, "assistant", f"[Document Analysis]: {answer[:500]}")
+        save_memory(user_id, "assistant", f"[Document Analysis for {doc_name}]: {answer[:600]}")
 
     return answer
 
@@ -398,12 +461,13 @@ async def generate_mitra_reply(user_msg: str, user_id: str, user_name: str = "")
             f"Namaste{name_str}! 🙏 I am *{BOT_NAME}*, your friendly AI companion & smart assistant.\n\n"
             "Here is what I can do for you:\n"
             "• *Text Chat*: Smart answers with deep reasoning & warm encouragement 💡\n"
-            "• *Documents & PDFs*: Send ANY PDF or PPT (Exam Question Papers, Business Invoices, Reports, or College Units) — I analyze & answer intelligently! 📄📊\n"
+            "• *Documents & PDFs*: Send ANY PDF or PPT (Question Papers, Invoices, Notes) — I remember the full document for multi-turn Q&A! 📄📊\n"
+            "• *Live Web Browsing*: Ask for today's weather, breaking news, match scores, or stock rates (or type '/search <query>') 🌐\n"
             "• *Voice Notes*: Send any audio message & I will understand it (Whisper v3) 🎙️\n"
             "• *Photo Analysis*: Send images of homework, code errors, or screens (Vision) 📷\n"
             "• *Languages*: Fluent in English, natural Hinglish, and Hindi 🇮🇳\n"
             "• *Creator*: Proudly engineered with ❤️ by *Gourav Dadheech* 👨‍💻\n"
-            "• Send *reset* anytime to clear conversation memory 🧹\n\n"
+            "• Send *reset* anytime to clear conversation & document memory 🧹\n\n"
             "How can I help you today?"
         )
 
@@ -456,6 +520,36 @@ WHATSAPP FORMATTING:
 - Always finish your sentences and thoughts completely."""
 
     messages = [{"role": "system", "content": system_prompt}]
+
+    # 1. Attach Active Document context if user has an uploaded document
+    active_doc = get_active_document(user_id)
+    if active_doc and active_doc.get("extracted_text"):
+        doc_context = f"""[ACTIVE ATTACHED DOCUMENT: "{active_doc.get('doc_name')}" ({active_doc.get('total_pages')} pages/slides)]
+FULL EXTRACTED CONTENT:
+\"\"\"
+{active_doc.get('extracted_text')}
+\"\"\"
+CRITICAL DOCUMENT INSTRUCTIONS:
+- The user is conversing about the document above (e.g. asking "explain q1", "solve question 3", "what does this mean", "next topic", "summarize section 2", or any specific question).
+- You MUST refer directly to the extracted text above to answer their question thoroughly, accurately, and with step-by-step detail!
+- NEVER ask the user to resend the question or document because you already have its full text right here."""
+        messages.append({"role": "system", "content": doc_context})
+
+    # 2. Check for real-time Live Web Browsing query
+    if should_search_web(user_msg):
+        search_query = user_msg.strip()
+        for pfx in ["/search", "search:", "google:", "browse:"]:
+            if search_query.lower().startswith(pfx):
+                search_query = search_query[len(pfx):].strip()
+        search_data = await asyncio.to_thread(perform_web_search, search_query)
+        if search_data:
+            web_context = f"""[LIVE REAL-TIME WEB SEARCH RESULTS FOR: "{search_query}"]
+\"\"\"
+{search_data}
+\"\"\"
+Use the live search results above to provide a fact-checked, up-to-date answer with citations!"""
+            messages.append({"role": "system", "content": web_context})
+
     for item in history:
         messages.append({"role": item["role"], "content": item["content"]})
     messages.append({"role": "user", "content": user_msg})
@@ -480,9 +574,9 @@ WHATSAPP FORMATTING:
                     model=model_name,
                     messages=messages,
                     temperature=0.7,
-                    max_tokens=650
+                    max_tokens=1400
                 ),
-                timeout=6.5
+                timeout=10.0
             )
             answer = response.choices[0].message.content.strip()
             if answer:
