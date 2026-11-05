@@ -1,20 +1,57 @@
-from groq import Groq
 import os
+from groq import Groq
 
-# Groq client will automatically read API key from environment variable
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+def get_groq_client():
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        raise ValueError("GROQ_API_KEY environment variable is not set.")
+    return Groq(api_key=api_key)
 
 def ask_ai(user_msg: str) -> str:
-    response = client.chat.completions.create(
-        model="llama-3.1-8b-instant",
-        messages=[
-            {"role": "system", "content": "You are Mitra, a friendly, helpful AI assistant. Answer clearly and completely."},
-            {"role": "user", "content": user_msg}
-        ],
-        temperature=0.7,
-        max_tokens=300
-    )
+    """Synchronous AI response helper for testing or CLI scripts."""
+    try:
+        client = get_groq_client()
+    except Exception as e:
+        return f"⚠️ Configuration error: {e}"
 
-    return response.choices[0].message.content
-
-
+    preferred_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    fallback_model = "llama-3.1-8b-instant"
+    try:
+        try:
+            response = client.chat.completions.create(
+                model=preferred_model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are Mitra, a friendly, warm, and supportive AI companion. "
+                            "Answer clearly, naturally, and politely. Format neatly for WhatsApp with WhatsApp markdown."
+                        )
+                    },
+                    {"role": "user", "content": user_msg}
+                ],
+                temperature=0.7,
+                max_tokens=700
+            )
+            return response.choices[0].message.content.strip()
+        except Exception:
+            if preferred_model != fallback_model:
+                response = client.chat.completions.create(
+                    model=fallback_model,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are Mitra, a friendly, warm, and supportive AI companion. "
+                                "Answer clearly, naturally, and politely. Format neatly for WhatsApp with WhatsApp markdown."
+                            )
+                        },
+                        {"role": "user", "content": user_msg}
+                    ],
+                    temperature=0.7,
+                    max_tokens=600
+                )
+                return response.choices[0].message.content.strip()
+            raise
+    except Exception as e:
+        return f"⚠️ Error: {e}"
