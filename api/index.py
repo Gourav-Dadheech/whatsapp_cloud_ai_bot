@@ -441,14 +441,14 @@ async def whatsapp_webhook(request: Request):
         try:
             image_bytes, ct = await download_media(media_url)
             vision_answer = await analyze_image_with_vision(image_bytes, ct, caption=user_msg, user_id=user_id)
-            reply_body = f"🤖 *{BOT_NAME}* (📷 Vision):\n\n{vision_answer}"
+            reply_body = f"🤖 *{BOT_NAME} AI* (📷 Vision)\n━━━━━━━━━━━━━━\n{vision_answer}"
             twilio_resp = MessagingResponse()
             twilio_resp.message(reply_body)
             return Response(content=str(twilio_resp), media_type="application/xml")
         except Exception as e:
             print(f"Image download error: {e}")
             twilio_resp = MessagingResponse()
-            twilio_resp.message(f"🤖 *{BOT_NAME}*:\n\n📷 Arre boss, image download nahi ho payi. Please try sending the photo again!")
+            twilio_resp.message(f"🤖 *{BOT_NAME} AI*:\n\n📷 Arre boss, image download nahi ho payi. Please try sending the photo again!")
             return Response(content=str(twilio_resp), media_type="application/xml")
 
     if not user_msg:
@@ -458,7 +458,7 @@ async def whatsapp_webhook(request: Request):
 
     # Format response for Twilio WhatsApp XML (TwiML)
     twilio_resp = MessagingResponse()
-    reply_body = f"🤖 *{BOT_NAME}*:\n\n{prefix}{answer}"
+    reply_body = f"🤖 *{BOT_NAME} AI*\n━━━━━━━━━━━━━━\n{prefix}{answer}"
     twilio_resp.message(reply_body)
 
     return Response(content=str(twilio_resp), media_type="application/xml")
