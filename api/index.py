@@ -429,9 +429,12 @@ async def whatsapp_webhook(request: Request):
                 prefix = f"🎙️ _Heard: \"{transcription}\"_\n\n"
                 user_msg = transcription
             else:
-                user_msg = "I could not clearly understand the audio. Please send again or type."
+                user_msg = "I could not clearly understand the voice note. Please speak clearly or send as text."
         except Exception as e:
-            user_msg = f"Audio download error: {e}"
+            print(f"Audio download error: {e}")
+            twilio_resp = MessagingResponse()
+            twilio_resp.message(f"🤖 *{BOT_NAME}*:\n\n🎙️ Arre boss, voice note download nahi ho paya. Please send your message as text or try again!")
+            return Response(content=str(twilio_resp), media_type="application/xml")
 
     # 2. Image / Photo processing via Groq Llama 3.2 Vision
     elif num_media > 0 and media_url and media_type.startswith("image/"):
@@ -443,7 +446,10 @@ async def whatsapp_webhook(request: Request):
             twilio_resp.message(reply_body)
             return Response(content=str(twilio_resp), media_type="application/xml")
         except Exception as e:
-            user_msg = f"Image download error: {e}"
+            print(f"Image download error: {e}")
+            twilio_resp = MessagingResponse()
+            twilio_resp.message(f"🤖 *{BOT_NAME}*:\n\n📷 Arre boss, image download nahi ho payi. Please try sending the photo again!")
+            return Response(content=str(twilio_resp), media_type="application/xml")
 
     if not user_msg:
         user_msg = "Hello"
