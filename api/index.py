@@ -29,13 +29,22 @@ class ChatRequest(BaseModel):
 
 
 async def download_media(media_url: str) -> tuple[bytes, str]:
-    """Downloads media from Twilio with optional Basic Auth."""
+    """Downloads media from Twilio with optional Basic Auth and direct fallback."""
     sid = os.getenv("TWILIO_ACCOUNT_SID")
     token = os.getenv("TWILIO_AUTH_TOKEN")
-    auth = httpx.BasicAuth(sid, token) if sid and token else None
 
-    async with httpx.AsyncClient(timeout=15.0) as http_client:
-        response = await http_client.get(media_url, auth=auth, follow_redirects=True)
+    async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as http_client:
+        if sid and token:
+            try:
+                response = await http_client.get(media_url, auth=httpx.BasicAuth(sid, token))
+                if response.status_code == 200:
+                    content_type = response.headers.get("content-type", "application/octet-stream")
+                    return response.content, content_type
+            except Exception as e:
+                print(f"Auth download failed: {e}")
+
+        # Fallback to direct download
+        response = await http_client.get(media_url)
         response.raise_for_status()
         content_type = response.headers.get("content-type", "application/octet-stream")
         return response.content, content_type
@@ -453,25 +462,32 @@ async def whatsapp_webhook(request: Request):
             else:
                 user_msg = "I could not clearly understand the voice note. Please speak clearly or send as text."
         except Exception as e:
-            print(f"Audio download error: {e}")
+            err_str = str(e)
+            print(f"Audio download error: {err_str}")
+            auth_note = " (401 Unauthorized)" if "401" in err_str else ""
             twilio_resp = MessagingResponse()
-            twilio_resp.message(f"🤖 *{BOT_NAME}*:\n\n🎙️ Arre boss, voice note download nahi ho paya. Please send your message as text or try again!")
+            twilio_resp.message(
+                f"🤖 *{BOT_NAME} AI*:\n━━━━━━━━━━━━━━\n"
+                f"🎙️ Voice note download nahi ho paya{auth_note}.\n\n"
+                "💡 To fix: In Twilio Console > Messaging > Settings > General, toggle 'HTTP Basic Authentication for Media' to DISABLED (or add TWILIO_ACCOUNT_SID & TWILIO_AUTH_TOKEN in Vercel)."
+            )
             return Response(content=str(twilio_resp), media_type="application/xml")
 
-    # 2. Image / Photo processing via Groq Llama 3.2 Vision
+    # 2. Image / Photo processing
     elif num_media > 0 and media_url and media_type.startswith("image/"):
-        try:
-            image_bytes, ct = await download_media(media_url)
-            vision_answer = await analyze_image_with_vision(image_bytes, ct, caption=user_msg, user_id=user_id)
-            reply_body = f"🤖 *{BOT_NAME} AI* (📷 Vision)\n━━━━━━━━━━━━━━\n{vision_answer}"
-            twilio_resp = MessagingResponse()
-            twilio_resp.message(reply_body)
-            return Response(content=str(twilio_resp), media_type="application/xml")
-        except Exception as e:
-            print(f"Image download error: {e}")
-            twilio_resp = MessagingResponse()
-            twilio_resp.message(f"🤖 *{BOT_NAME} AI*:\n\n📷 Arre boss, image download nahi ho payi. Please try sending the photo again!")
-            return Response(content=str(twilio_resp), media_type="application/xml")
+        twilio_resp = MessagingResponse()
+        if user_msg and user_msg != "Hello":
+            # If user included a caption or question with the photo, answer it!
+            answer = await generate_mitra_reply(user_msg=user_msg, user_id=user_id, user_name=user_name)
+            reply_text = f"🤖 *{BOT_NAME} AI* (📷 Photo & Question)\n━━━━━━━━━━━━━━\n{answer}"
+        else:
+            reply_text = (
+                f"🤖 *{BOT_NAME} AI* (📷 Photo Received)\n━━━━━━━━━━━━━━\n"
+                "Photo received! Groq text and voice models are currently active on this tier.\n\n"
+                "Please type your question or send a voice note 🎙️ and I will answer immediately!"
+            )
+        twilio_resp.message(reply_text)
+        return Response(content=str(twilio_resp), media_type="application/xml")
 
     if not user_msg:
         user_msg = "Hello"
