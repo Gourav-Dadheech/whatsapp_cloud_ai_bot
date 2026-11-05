@@ -74,7 +74,7 @@ async def transcribe_audio(audio_bytes: bytes, filename: str = "voice.ogg") -> s
 
 
 async def analyze_image_with_vision(image_bytes: bytes, content_type: str, caption: str = "", user_id: str = "") -> str:
-    """Analyzes photos, homework, receipts, and errors using Groq Llama 3.2 Vision."""
+    """Analyzes photos, icons, homework, receipts, and objects using Groq Multimodal Vision."""
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         return "⚠️ GROQ_API_KEY is not set."
@@ -83,15 +83,21 @@ async def analyze_image_with_vision(image_bytes: bytes, content_type: str, capti
     b64_image = base64.b64encode(image_bytes).decode("utf-8")
     data_url = f"data:{content_type};base64,{b64_image}"
 
-    prompt_text = caption.strip() if caption.strip() else (
-        "Please examine this image carefully. Describe what you see, answer any questions shown, "
-        "or explain the content clearly and helpfully using clean WhatsApp formatting (*bold*, bullet points)."
+    question = caption.strip() if caption.strip() and caption.strip().lower() != "hello" else "What is this image? Describe what you see in detail."
+
+    prompt_text = (
+        f"You are Mitra AI, a helpful, friendly AI companion on WhatsApp. "
+        f"Examine this image carefully and answer the user's question clearly. "
+        f"Identify any apps, logos, objects, or text shown in the picture accurately. "
+        f"Use clean WhatsApp formatting (*bold*, bullet points). "
+        f"Match the language: reply in English if asked in English, or in Hinglish if asked in Hinglish.\n\n"
+        f"User question about this image: {question}"
     )
 
     try:
         response = await asyncio.wait_for(
             client.chat.completions.create(
-                model="llama-3.2-11b-vision-preview",
+                model="qwen/qwen3.8-27b",
                 messages=[
                     {
                         "role": "user",
@@ -103,16 +109,16 @@ async def analyze_image_with_vision(image_bytes: bytes, content_type: str, capti
                 ],
                 max_tokens=700
             ),
-            timeout=12.0
+            timeout=14.0
         )
         answer = response.choices[0].message.content.strip()
         if user_id:
-            save_memory(user_id, "user", f"[Sent an Image: {prompt_text}]")
+            save_memory(user_id, "user", f"[Sent an Image: {question}]")
             save_memory(user_id, "assistant", answer)
         return answer
     except Exception as e:
         print(f"Vision error: {e}")
-        return f"Arre boss, photo process karne mein error aa gaya: {str(e)[:80]}"
+        return f"Photo analyze karne mein issue aaya ({str(e)[:70]}). Please try sending again!"
 
 
 async def generate_mitra_reply(user_msg: str, user_id: str, user_name: str = "") -> str:
@@ -473,21 +479,25 @@ async def whatsapp_webhook(request: Request):
             )
             return Response(content=str(twilio_resp), media_type="application/xml")
 
-    # 2. Image / Photo processing
+    # 2. Image / Photo processing via Groq Multimodal Vision
     elif num_media > 0 and media_url and media_type.startswith("image/"):
-        twilio_resp = MessagingResponse()
-        if user_msg and user_msg != "Hello":
-            # If user included a caption or question with the photo, answer it!
-            answer = await generate_mitra_reply(user_msg=user_msg, user_id=user_id, user_name=user_name)
-            reply_text = f"🤖 *{BOT_NAME} AI* (📷 Photo & Question)\n━━━━━━━━━━━━━━\n{answer}"
-        else:
-            reply_text = (
-                f"🤖 *{BOT_NAME} AI* (📷 Photo Received)\n━━━━━━━━━━━━━━\n"
-                "Photo received! Groq text and voice models are currently active on this tier.\n\n"
-                "Please type your question or send a voice note 🎙️ and I will answer immediately!"
+        try:
+            image_bytes, ct = await download_media(media_url)
+            vision_answer = await analyze_image_with_vision(image_bytes, ct, caption=user_msg, user_id=user_id)
+            reply_body = f"🤖 *{BOT_NAME} AI* (📷 Vision)\n━━━━━━━━━━━━━━\n{vision_answer}"
+            twilio_resp = MessagingResponse()
+            twilio_resp.message(reply_body)
+            return Response(content=str(twilio_resp), media_type="application/xml")
+        except Exception as e:
+            err_str = str(e)
+            print(f"Image download/vision error: {err_str}")
+            auth_note = " (401 Unauthorized)" if "401" in err_str else ""
+            twilio_resp = MessagingResponse()
+            twilio_resp.message(
+                f"🤖 *{BOT_NAME} AI*:\n━━━━━━━━━━━━━━\n"
+                f"📷 Image process nahi ho payi{auth_note}. Please try sending the photo again!"
             )
-        twilio_resp.message(reply_text)
-        return Response(content=str(twilio_resp), media_type="application/xml")
+            return Response(content=str(twilio_resp), media_type="application/xml")
 
     if not user_msg:
         user_msg = "Hello"
