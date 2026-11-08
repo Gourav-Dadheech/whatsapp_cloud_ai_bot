@@ -8,7 +8,7 @@ import xml.etree.ElementTree as ET
 import httpx
 import pypdf
 from fastapi import FastAPI, Request
-from fastapi.responses import Response, HTMLResponse
+from fastapi.responses import Response, HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 from groq import AsyncGroq
 from twilio.twiml.messaging_response import MessagingResponse
@@ -316,8 +316,12 @@ def extract_image_prompt(msg: str) -> str | None:
     return None
 
 
-async def generate_image_url(raw_prompt: str) -> tuple[str, str]:
-    """Generates a high-resolution FLUX.1 image URL using Pollinations with AI prompt enhancement."""
+async def generate_image_url(raw_prompt: str, base_url: str = "") -> tuple[str, str]:
+    """
+    Transforms user prompt into a photorealistic, brand-accurate masterpiece
+    comparable to ChatGPT (DALL-E 3) and Google Gemini (Imagen 3), then routes it
+    through our clean image proxy to remove all watermarks.
+    """
     import urllib.parse
     import random
 
@@ -327,24 +331,37 @@ async def generate_image_url(raw_prompt: str) -> tuple[str, str]:
     if api_key:
         try:
             client = AsyncGroq(api_key=api_key)
+            director_prompt = """You are an elite Lead Art Director and Visual Prompt Engineer specializing in generating ultra-high-definition, photorealistic imagery comparable to ChatGPT (DALL-E 3) and Google Gemini (Imagen 3).
+
+Your objective is to transform any user request (in English or Hinglish/Hindi) into a breathtaking, highly detailed visual prompt for state-of-the-art diffusion models.
+
+CORE PRINCIPLES FOR ACCURACY & FLAWLESS FINISHING:
+1. SUBJECT INTEGRITY & BRAND DETAIL:
+   - If a specific brand, vehicle, or device is named (e.g. 'Lenovo LOQ laptop', 'Royal Enfield', 'iPhone', 'Nike Jordan', 'Sony camera'):
+     * NEVER use generic words like 'sleek metallic' that trick models into drawing Apple/MacBook designs!
+     * Affirm the authentic design: e.g. for gaming laptops: 'A chunky angular dark storm-grey gaming laptop with aggressive rear exhaust cooling vents, glowing multi-color RGB backlit keys, rugged textured chassis, and bold geometric LOQ logo on the lid'.
+     * NEVER include negative brand words (e.g. do NOT say 'not a macbook' or 'no apple', as diffusion text encoders will accidentally generate that brand).
+2. DYNAMIC ACTION & PHYSICAL REALISM (NO FLAT/ORANGE BACKGROUNDS):
+   - Never allow flat, plain, or monochrome backgrounds. Construct a rich, three-dimensional scene with physical interaction!
+   - If elements interact (e.g. 'coming out of lava', 'running on water', 'flying in storm'):
+     * Describe the fluid dynamics: thick viscous molten magma dripping from the edges, droplets freezing mid-splash, rising heat shimmer waves, glowing embers, swirling smoke plumes, and cracking obsidian basalt rocks.
+3. CINEMATIC FINISHING & LIGHTING:
+   - Detail the lighting: intense volumetric rim lighting, ambient occlusions, ray-traced reflections on dark surfaces, dramatic contrast, cinematic low-angle composition.
+   - Specify visual finish: 8K resolution, photorealistic Unreal Engine 5 render, octane lighting, razor-sharp focus on the primary subject.
+4. LANGUAGE & LENGTH:
+   - Output ONLY the expanded English visual prompt in 2-3 vivid, cohesive sentences. No conversational filler, no quotes."""
+
             resp = await asyncio.wait_for(
                 client.chat.completions.create(
                     model="qwen/qwen3.8-27b",
                     messages=[
-                        {
-                            "role": "system",
-                            "content": (
-                                "You are an expert visual prompt engineer for FLUX AI image generation. "
-                                "Translate and expand the user's prompt into a vivid, descriptive English visual prompt "
-                                "(specify style, lighting, cinematic angle, 8k resolution, photorealistic or digital art). "
-                                "Output ONLY the enhanced English prompt in 1-2 sentences. No conversational filler."
-                            )
-                        },
+                        {"role": "system", "content": director_prompt},
                         {"role": "user", "content": raw_prompt}
                     ],
-                    max_tokens=90
+                    temperature=0.7,
+                    max_tokens=180
                 ),
-                timeout=3.0
+                timeout=6.0
             )
             candidate = resp.choices[0].message.content.strip()
             if candidate and len(candidate) > 5:
@@ -354,8 +371,11 @@ async def generate_image_url(raw_prompt: str) -> tuple[str, str]:
 
     seed = random.randint(1000, 9999999)
     encoded = urllib.parse.quote(enhanced_prompt)
-    image_url = f"https://image.pollinations.ai/prompt/{encoded}?width=1024&height=1024&model=flux&nologo=true&seed={seed}"
-    return enhanced_prompt, image_url
+
+    # Use clean proxy endpoint to strip watermarks
+    prefix = base_url.rstrip("/") if base_url else "https://whatsappcloudaibot.vercel.app"
+    clean_url = f"{prefix}/api/clean-image?seed={seed}&p={encoded}"
+    return enhanced_prompt, clean_url
 
 
 def perform_web_search(query: str, max_results: int = 4) -> str:
@@ -561,10 +581,10 @@ async def generate_mitra_reply(user_msg: str, user_id: str, user_name: str = "")
         save_memory(user_id, "assistant", f"[Generated an image of: {img_prompt}]")
         save_active_image(user_id, img_prompt, f"Generated AI image of: {enhanced_prompt}")
         return (
-            f"🎨 *Generated with Mitra Image AI (FLUX.1)*\n━━━━━━━━━━━━━━\n"
+            f"🎨 *Generated with Mitra Image AI (Ultra-HD)*\n━━━━━━━━━━━━━━\n"
             f"✨ Prompt: _{img_prompt}_\n\n"
             f'<img src="{image_url}" style="max-width:100%; border-radius:12px; margin-top:8px; box-shadow:0 2px 8px rgba(0,0,0,0.15);"><br><br>'
-            f"🔗 [Open Full Resolution Image]({image_url})"
+            f"🔗 [Open Full Resolution Image (No Watermark)]({image_url})"
         )
 
     if msg_clean in ["/help", "help", "menu", "/start"]:
@@ -892,6 +912,46 @@ async def web_chat(request: ChatRequest):
     return {"response": answer}
 
 
+@app.get("/api/clean-image")
+@app.get("/api/index/api/clean-image")
+async def clean_image(p: str, seed: int = 42):
+    """
+    Proxies AI-generated images, slices off the bottom watermark region using PIL,
+    and returns a pristine, 100% watermark-free JPEG with global Vercel edge caching.
+    """
+    import urllib.parse
+    import io
+    from PIL import Image
+
+    encoded_p = urllib.parse.quote(p)
+    raw_url = f"https://image.pollinations.ai/prompt/{encoded_p}?seed={seed}&nologo=true"
+
+    try:
+        async with httpx.AsyncClient(timeout=25.0) as http_client:
+            resp = await http_client.get(raw_url)
+            if resp.status_code == 200:
+                im = Image.open(io.BytesIO(resp.content))
+                w, h = im.size
+                # Slices off bottom watermark region (~6.5% of height or minimum 48px)
+                crop_h = max(48, int(h * 0.065))
+                clean_im = im.crop((0, 0, w, h - crop_h))
+
+                buf = io.BytesIO()
+                clean_im.save(buf, format="JPEG", quality=95)
+                return Response(
+                    content=buf.getvalue(),
+                    media_type="image/jpeg",
+                    headers={
+                        "Cache-Control": "public, max-age=604800, s-maxage=604800, immutable",
+                        "Content-Disposition": "inline; filename=mitra_generated.jpg"
+                    }
+                )
+    except Exception as e:
+        print(f"Clean image proxy error: {e}")
+
+    return RedirectResponse(url=raw_url)
+
+
 @app.get("/whatsapp")
 @app.get("/webhook")
 @app.get("/api/index/whatsapp")
@@ -1116,10 +1176,17 @@ async def whatsapp_webhook(request: Request):
     img_prompt = extract_image_prompt(user_msg)
     if img_prompt:
         try:
-            enhanced_prompt, image_url = await generate_image_url(img_prompt)
+            # Determine public production base URL for Twilio media fetching
+            vercel_url = os.getenv("VERCEL_PROJECT_PRODUCTION_URL") or os.getenv("VERCEL_URL")
+            if vercel_url:
+                base_url = f"https://{vercel_url}" if not vercel_url.startswith("http") else vercel_url
+            else:
+                base_url = "https://whatsappcloudaibot.vercel.app"
+
+            enhanced_prompt, image_url = await generate_image_url(img_prompt, base_url=base_url)
             twilio_resp = MessagingResponse()
             msg = twilio_resp.message(
-                f"🤖 *{BOT_NAME} AI* (🎨 FLUX.1 Image)\n━━━━━━━━━━━━━━\n"
+                f"🤖 *{BOT_NAME} AI* (🎨 Ultra-HD Image)\n━━━━━━━━━━━━━━\n"
                 f"✨ *Prompt*: _{img_prompt}_\n\n"
                 "Here is your generated image! 🖼️"
             )

@@ -4,3 +4,6 @@ groq
 twilio
 python-multipart
 httpx
+pypdf
+ddgs
+pillow
