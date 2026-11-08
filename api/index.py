@@ -21,12 +21,14 @@ if BASE_DIR not in sys.path:
 try:
     from memory import (
         get_memory, save_memory, clear_memory,
-        get_active_document, save_active_document, clear_active_document
+        get_active_document, save_active_document, clear_active_document,
+        get_active_image, save_active_image, clear_active_image
     )
 except ImportError:
     from api.memory import (
         get_memory, save_memory, clear_memory,
-        get_active_document, save_active_document, clear_active_document
+        get_active_document, save_active_document, clear_active_document,
+        get_active_image, save_active_image, clear_active_image
     )
 
 app = FastAPI(title="Mitra WhatsApp AI Bot")
@@ -217,6 +219,7 @@ User's question: {question}"""
         )
         answer = response.choices[0].message.content.strip()
         if user_id:
+            save_active_image(user_id, question, answer)
             save_memory(user_id, "user", f"[Sent an Image: {question}]")
             save_memory(user_id, "assistant", answer)
         return answer
@@ -275,6 +278,84 @@ def check_creator_query(msg: str) -> str | None:
                 "How can I help you today? 😊"
             )
     return None
+
+
+def extract_image_prompt(msg: str) -> str | None:
+    """Detects if the user wants to generate an image, and extracts the visual prompt."""
+    m = msg.strip().lower()
+
+    # Explicit command triggers
+    for pfx in ["/image", "/imagine", "/draw", "image:", "draw:", "imagine:"]:
+        if m.startswith(pfx):
+            prompt = msg.strip()[len(pfx):].strip()
+            return prompt if prompt else None
+
+    # Natural language triggers
+    triggers = [
+        "generate an image of", "generate a picture of", "generate a photo of", "generate image of", "generate photo of",
+        "create an image of", "create a picture of", "create a photo of", "create image of",
+        "make an image of", "make a picture of", "make a photo of",
+        "draw an image of", "draw a picture of", "draw a photo of", "draw me a", "draw a",
+        "photo generate karo", "image generate karo", "photo bana kar do", "image bana do",
+        "photo bana do", "photo banao", "image banao", "tasveer banao", "chitra banao",
+        "picture banao", "can you draw", "can you generate an image of", "can you make an image of"
+    ]
+
+    for t in triggers:
+        if t in m:
+            idx = m.find(t)
+            extracted = msg[idx + len(t):].strip(" :,-")
+            if not extracted or len(extracted) < 2:
+                prefix_part = msg[:idx].strip()
+                for stopword in [" ki", " ka", " ke", " ek", " a"]:
+                    if prefix_part.lower().endswith(stopword):
+                        prefix_part = prefix_part[:-len(stopword)].strip()
+                extracted = prefix_part
+            return extracted if extracted else None
+
+    return None
+
+
+async def generate_image_url(raw_prompt: str) -> tuple[str, str]:
+    """Generates a high-resolution FLUX.1 image URL using Pollinations with AI prompt enhancement."""
+    import urllib.parse
+    import random
+
+    api_key = os.getenv("GROQ_API_KEY")
+    enhanced_prompt = raw_prompt
+
+    if api_key:
+        try:
+            client = AsyncGroq(api_key=api_key)
+            resp = await asyncio.wait_for(
+                client.chat.completions.create(
+                    model="qwen/qwen3.8-27b",
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are an expert visual prompt engineer for FLUX AI image generation. "
+                                "Translate and expand the user's prompt into a vivid, descriptive English visual prompt "
+                                "(specify style, lighting, cinematic angle, 8k resolution, photorealistic or digital art). "
+                                "Output ONLY the enhanced English prompt in 1-2 sentences. No conversational filler."
+                            )
+                        },
+                        {"role": "user", "content": raw_prompt}
+                    ],
+                    max_tokens=90
+                ),
+                timeout=3.0
+            )
+            candidate = resp.choices[0].message.content.strip()
+            if candidate and len(candidate) > 5:
+                enhanced_prompt = candidate.strip('"\'.')
+        except Exception as e:
+            print(f"Prompt enhancement error: {e}")
+
+    seed = random.randint(1000, 9999999)
+    encoded = urllib.parse.quote(enhanced_prompt)
+    image_url = f"https://image.pollinations.ai/prompt/{encoded}?width=1024&height=1024&model=flux&nologo=true&seed={seed}"
+    return enhanced_prompt, image_url
 
 
 def perform_web_search(query: str, max_results: int = 4) -> str:
@@ -472,19 +553,34 @@ async def generate_mitra_reply(user_msg: str, user_id: str, user_name: str = "")
         save_memory(user_id, "assistant", creator_reply)
         return creator_reply
 
+    # AI Image Generation Request
+    img_prompt = extract_image_prompt(user_msg)
+    if img_prompt:
+        enhanced_prompt, image_url = await generate_image_url(img_prompt)
+        save_memory(user_id, "user", user_msg)
+        save_memory(user_id, "assistant", f"[Generated an image of: {img_prompt}]")
+        save_active_image(user_id, img_prompt, f"Generated AI image of: {enhanced_prompt}")
+        return (
+            f"🎨 *Generated with Mitra Image AI (FLUX.1)*\n━━━━━━━━━━━━━━\n"
+            f"✨ Prompt: _{img_prompt}_\n\n"
+            f'<img src="{image_url}" style="max-width:100%; border-radius:12px; margin-top:8px; box-shadow:0 2px 8px rgba(0,0,0,0.15);"><br><br>'
+            f"🔗 [Open Full Resolution Image]({image_url})"
+        )
+
     if msg_clean in ["/help", "help", "menu", "/start"]:
         name_str = f" {user_name}" if user_name else ""
         return (
             f"Namaste{name_str}! 🙏 I am *{BOT_NAME}*, your friendly AI companion & smart assistant.\n\n"
             "Here is what I can do for you:\n"
             "• *Text Chat*: Smart answers with deep reasoning & warm encouragement 💡\n"
+            "• *AI Image Generation*: Type 'photo banao <prompt>' or '/image <prompt>' for stunning FLUX.1 pictures! 🎨✨\n"
             "• *Documents & PDFs*: Send ANY PDF or PPT (Question Papers, Invoices, Notes) — I remember the full document for multi-turn Q&A! 📄📊\n"
             "• *Live Web Browsing*: Ask for today's weather, breaking news, match scores, or stock rates (or type '/search <query>') 🌐\n"
             "• *Voice Notes*: Send any audio message & I will understand it (Whisper v3) 🎙️\n"
             "• *Photo Analysis*: Send images of homework, code errors, or screens (Vision) 📷\n"
             "• *Languages*: Fluent in English, natural Hinglish, and Hindi 🇮🇳\n"
             "• *Creator*: Proudly engineered with ❤️ by *Gourav Dadheech* 👨‍💻\n"
-            "• Send *reset* anytime to clear conversation & document memory 🧹\n\n"
+            "• Send *reset* anytime to clear conversation, document & photo memory 🧹\n\n"
             "How can I help you today?"
         )
 
@@ -513,6 +609,11 @@ PERSONALITY & EMOTIONAL CONNECTION (ChatGPT-like):
 - Praise and celebrate their efforts and curiosity genuinely (e.g., "That's a fantastic question!", "Proud of your dedication!", "I'm right here with you!").
 - Speak like a thoughtful, caring friend and mentor ("Mitra"), never like a cold robot.
 - Be patient, understanding, and positive.
+
+CONVERSATION CONTINUITY & CONTEXT RECALL (CRITICAL RULE):
+- Always analyze the full dialogue history, active attached document, and active attached photo context before answering.
+- When the user asks follow-up questions like "can you explain this?", "how to use this?", "what was in that picture?", "solve question 2", "tell me more about the second app", or uses pronouns ("this", "that", "it", "them"), IMMEDIATELY connect them to the previous turns, previously sent image, or uploaded document!
+- Never act as if you don't know what the user is referring to. You have access to their previously shared pictures, documents, and chat turns right above.
 
 VERSATILE DOCUMENT & PDF INTELLIGENCE:
 - You handle all types of documents according to their true nature:
@@ -551,12 +652,28 @@ FULL EXTRACTED CONTENT:
 {active_doc.get('extracted_text')}
 \"\"\"
 CRITICAL DOCUMENT INSTRUCTIONS:
+- An active document is currently loaded for this user ('{active_doc.get('doc_name')}').
 - The user is conversing about the document above (e.g. asking "explain q1", "solve question 3", "what does this mean", "next topic", "summarize section 2", or any specific question).
 - You MUST refer directly to the extracted text above to answer their question thoroughly, accurately, and with step-by-step detail!
 - NEVER ask the user to resend the question or document because you already have its full text right here."""
         messages.append({"role": "system", "content": doc_context})
 
-    # 2. Check for real-time Live Web Browsing query
+    # 2. Attach Active Image / Photo context if user previously sent an image
+    active_img = get_active_image(user_id)
+    if active_img and active_img.get("description"):
+        img_context = f"""[PREVIOUSLY SHARED IMAGE / PHOTO CONTEXT]
+The user previously sent a photo/image (caption: "{active_img.get('caption', 'None')}").
+Visual Analysis & Details of what was in that image:
+\"\"\"
+{active_img.get('description')}
+\"\"\"
+CRITICAL IMAGE RECALL INSTRUCTIONS:
+- An active photo/image is currently loaded for this user.
+- If the user asks follow-up questions like "can you give instructions to use this?", "what was in the picture?", "explain the second app", "what color was it?", or refers to previous photos, USE THIS IMAGE CONTEXT to answer seamlessly and accurately!
+- You know exactly what was in the image because the full description is right here above. NEVER ask the user what was in the photo."""
+        messages.append({"role": "system", "content": img_context})
+
+    # 3. Check for real-time Live Web Browsing query
     if should_search_web(user_msg):
         search_query = user_msg.strip()
         for pfx in ["/search", "search:", "google:", "browse:"]:
@@ -571,9 +688,21 @@ CRITICAL DOCUMENT INSTRUCTIONS:
 Use the live search results above to provide a fact-checked, up-to-date answer with citations!"""
             messages.append({"role": "system", "content": web_context})
 
-    for item in history:
+    for item in history[-18:]:
         messages.append({"role": item["role"], "content": item["content"]})
-    messages.append({"role": "user", "content": user_msg})
+
+    user_final_content = user_msg
+    context_tags = []
+    if active_doc and active_doc.get("extracted_text"):
+        context_tags.append(f"Active Document: '{active_doc.get('doc_name')}'")
+    if active_img and active_img.get("description"):
+        caption_lbl = active_img.get('caption') or 'Photo'
+        context_tags.append(f"Active Photo: '{caption_lbl}'")
+
+    if context_tags:
+        user_final_content = f"[{' | '.join(context_tags)}]\n{user_msg}"
+
+    messages.append({"role": "user", "content": user_final_content})
 
     models_to_try = [
         os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"),
@@ -588,7 +717,7 @@ Use the live search results above to provide a fact-checked, up-to-date answer w
     answer = None
     last_err = None
 
-    target_tokens = 950 if (active_doc and active_doc.get("extracted_text")) else 550
+    target_tokens = 950 if ((active_doc and active_doc.get("extracted_text")) or (active_img and active_img.get("description"))) else 550
 
     for model_name in models_to_try:
         try:
@@ -676,10 +805,10 @@ async def home():
         </div>
     </div>
     <div class="info-bar">
-        ⚡ <b>Mitra Supercharged</b>: 👨‍💻 Created by <b>Gourav Dadheech</b> | 📚 College Unit & Document Tutor | 🧠 GPT-OSS 120B | 🎙️ Voice Notes | 📷 Vision
+        ⚡ <b>Mitra Supercharged</b>: 🎨 AI Image Generator (FLUX.1) | 🧠 GPT-OSS 120B | 📚 PDF/Doc Analysis | 🎙️ Voice | 📷 Vision | 🌐 Web Search
     </div>
     <div class="chat-container" id="chat-container">
-        <div class="message bot-message">🤖 *{BOT_NAME}*:\n\nNamaste! I am Mitra, proudly created and engineered by *Gourav Dadheech*. 👨‍💻🚀\n\nI can help you master college units, analyze your study PDFs and PPTs topic-by-topic, transcribe voice notes, and answer your questions with warm encouragement! How can I help you today?</div>
+        <div class="message bot-message">🤖 *{BOT_NAME}*:\n\nNamaste! I am Mitra, proudly created and engineered by *Gourav Dadheech*. 👨‍💻🚀\n\nI can generate stunning AI images (FLUX.1), guide you through college units & PDFs, search the live web, transcribe voice notes, and answer anything with long-term memory! Try typing "photo banao a futuristic cyber car" or ask me anything!</div>
     </div>
     <div class="input-area">
         <input type="text" id="message-input" placeholder="Type a message or 'help'..." onkeypress="handleKeyPress(event)" autofocus>
@@ -699,7 +828,11 @@ async def home():
         function addMessage(text, isUser) {{
             const msgDiv = document.createElement('div');
             msgDiv.className = `message ${{isUser ? 'user-message' : 'bot-message'}}`;
-            msgDiv.textContent = text;
+            if (!isUser && text.includes('<img ')) {{
+                msgDiv.innerHTML = text.replace(/\\n/g, '<br>');
+            }} else {{
+                msgDiv.textContent = text;
+            }}
             chatContainer.appendChild(msgDiv);
             chatContainer.scrollTop = chatContainer.scrollHeight;
         }}
@@ -978,6 +1111,25 @@ async def whatsapp_webhook(request: Request):
 
     if not user_msg:
         user_msg = "Hello"
+
+    # Check if user asked for AI image generation on WhatsApp
+    img_prompt = extract_image_prompt(user_msg)
+    if img_prompt:
+        try:
+            enhanced_prompt, image_url = await generate_image_url(img_prompt)
+            twilio_resp = MessagingResponse()
+            msg = twilio_resp.message(
+                f"🤖 *{BOT_NAME} AI* (🎨 FLUX.1 Image)\n━━━━━━━━━━━━━━\n"
+                f"✨ *Prompt*: _{img_prompt}_\n\n"
+                "Here is your generated image! 🖼️"
+            )
+            msg.media(image_url)
+            save_memory(user_id, "user", user_msg)
+            save_memory(user_id, "assistant", f"[Generated AI image of: {img_prompt}]")
+            save_active_image(user_id, img_prompt, f"Generated AI image of: {enhanced_prompt}")
+            return Response(content=str(twilio_resp), media_type="application/xml")
+        except Exception as e:
+            print(f"WhatsApp image generation error: {e}")
 
     answer = await generate_mitra_reply(user_msg=user_msg, user_id=user_id, user_name=user_name)
 
