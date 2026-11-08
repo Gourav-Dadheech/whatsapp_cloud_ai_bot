@@ -142,8 +142,9 @@ GROQ_MODEL                - Preferred model (default: openai/gpt-oss-20b)
 BOT_NAME                  - Display name (default: Mitra)
 UPSTASH_REDIS_REST_URL    - Upstash Redis REST endpoint for memory
 UPSTASH_REDIS_REST_TOKEN  - Upstash Redis REST authorization token
-TWILIO_ACCOUNT_SID        - Twilio Account SID (Required to display native WhatsApp '... typing' popup)
-TWILIO_AUTH_TOKEN         - Twilio Auth Token (Required to display native WhatsApp '... typing' popup)
+TWILIO_ACCOUNT_SID        - Twilio Account SID (for WhatsApp typing indicator & media)
+TWILIO_AUTH_TOKEN         - Twilio Auth Token (for WhatsApp typing indicator & media)
+POLLINATIONS_API_KEY      - Optional: Free Pollen key from enter.pollinations.ai (for uncapped FLUX.1 Pro)
 MAX_MEMORY_MESSAGES       - History turns retained per user (default: 50)
 
 --------------------------------------------------------------------------------

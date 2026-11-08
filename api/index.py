@@ -356,25 +356,26 @@ async def generate_image_url(raw_prompt: str, base_url: str = "") -> tuple[str, 
             client = AsyncGroq(api_key=api_key)
             director_prompt = """You are an elite Lead Art Director and Visual Prompt Engineer specializing in generating ultra-high-definition, photorealistic imagery comparable to ChatGPT (DALL-E 3) and Google Gemini (Imagen 3).
 
-Your objective is to transform any user request (in English or Hinglish/Hindi) into a breathtaking, highly detailed visual prompt for state-of-the-art diffusion models (FLUX.1).
+Your objective is to transform any user request (in English or Hinglish/Hindi) into a breathtaking visual prompt for state-of-the-art diffusion models (FLUX.1).
 
-CORE PRINCIPLES FOR ACCURACY & ZERO CONFUSION:
-1. SUBJECT-FIRST ARCHITECTURE (THE 80% RULE):
-   - The primary subject noun MUST appear within the first 5-8 words (e.g. 'Hero product shot of an open dark Lenovo LOQ gaming laptop with glowing RGB keyboard...').
-   - Keep 80% of the prompt focused directly on the subject, its physical build, geometry, and active state.
-2. PC & HARDWARE ACCURACY (ANTI-MACBOOK):
+CORE PRINCIPLES FOR FUSION & ZERO CONFUSION:
+1. PHYSICAL FUSION & DIRECT INTERACTION (PREVENT SEPARATE OBJECTS):
+   - When an object interacts with an element (e.g. laptop coming out of lava, car in water, robot in fire):
+     * The subject and the element MUST be in direct physical contact and physically merged in action!
+     * Describe the physical interaction vividly: e.g. 'A dark Lenovo LOQ gaming laptop breaking out from inside a lake of liquid fire, thick bright orange molten lava pouring and splashing over the open keyboard and screen, viscous liquid magma dripping from the laptop chassis, flying fiery embers'.
+     * CRITICAL FORBIDDEN WORDS: NEVER say 'hero product shot', 'product photography', 'studio backdrop', 'photo studio', 'table', 'desk', or 'surface'. Those words trick the model into placing the laptop on a clean desk with the lava placed separately in the background!
+2. SINGLE UNIFIED COMPOSITION (NO PANELS / NO SPLIT SCREEN):
+   - Always enforce: 'Single unified image, widescreen full frame, single camera viewpoint, no split screen, no collage, no multiple panels'.
+3. PC & HARDWARE ACCURACY (ANTI-MACBOOK):
    - For PC/Gaming laptops (Lenovo LOQ, Legion, ASUS ROG, Acer Predator, Dell Alienware, HP Omen, etc.):
      * Depict the laptop OPEN: 'open dark storm-grey gaming laptop with illuminated vibrant screen, brightly glowing multi-color RGB backlit keyboard, thick rear exhaust cooling vents, angular gamer chassis'.
      * NEVER use generic words like 'sleek slim aluminum' or 'minimalist metallic' that deceive diffusion models into rendering Apple MacBooks!
      * NEVER mention negative words like 'not a macbook' or 'no apple'.
-3. NO UNREQUESTED GEOLOGY OR ROCKS (PREVENT MOUNTAIN / ROCK PAHAD):
+4. NO UNREQUESTED GEOLOGY OR ROCKS (PREVENT MOUNTAIN / ROCK PAHAD):
    - NEVER add words like 'obsidian basalt rocks', 'crusts', 'rock formations', 'rocky surfaces', 'boulders', or 'mountains' unless the user explicitly requested rocks or mountains.
-   - For liquid lava, water, or fire interaction: describe liquid fluid dynamics ('rising dramatically out of a pool of bubbling bright molten orange liquid lava, splashes of liquid fire, fiery lava droplets flying, glowing fiery embers, dark studio atmosphere').
-4. CINEMATIC FINISH & LIGHTING:
-   - Add dramatic lighting: intense volumetric rim lighting, vivid orange and crimson glow, dark high-contrast studio backdrop, ray-traced reflections on dark surfaces.
-   - Professional rendering tags: 'razor-sharp focus on the subject, 8k resolution, cinematic product photography, Unreal Engine 5 render'.
+   - For liquid lava, water, or fire interaction: describe liquid fluid dynamics ('boiling molten orange liquid lava, splashes of liquid fire, viscous magma droplets flying in mid-air, glowing fiery embers').
 5. LENGTH & CONCISENESS:
-   - Keep the prompt between 38-52 words in 1-2 vivid, punchy sentences. Diffusion models dilute attention when prompts are long essays.
+   - Keep the prompt between 35-48 words in 1-2 vivid, punchy sentences. Diffusion models dilute attention when prompts are long essays.
    - Output ONLY the expanded English visual prompt. No conversational filler, no explanations, no quotes."""
 
             resp = await asyncio.wait_for(
@@ -1005,12 +1006,18 @@ async def clean_image(p: str, seed: int = 42):
     import io
     from PIL import Image
 
+    pollinations_key = os.getenv("POLLINATIONS_API_KEY")
     encoded_p = urllib.parse.quote(p)
-    raw_url = f"https://image.pollinations.ai/prompt/{encoded_p}?seed={seed}&nologo=true"
+    req_headers = {}
+    if pollinations_key:
+        raw_url = f"https://gen.pollinations.ai/image/{encoded_p}?model=black-forest-labs/flux.1-schnell&seed={seed}&nologo=true"
+        req_headers = {"Authorization": f"Bearer {pollinations_key}"}
+    else:
+        raw_url = f"https://image.pollinations.ai/prompt/{encoded_p}?seed={seed}&nologo=true"
 
     try:
-        async with httpx.AsyncClient(timeout=25.0) as http_client:
-            resp = await http_client.get(raw_url)
+        async with httpx.AsyncClient(timeout=30.0) as http_client:
+            resp = await http_client.get(raw_url, headers=req_headers)
             if resp.status_code == 200:
                 im = Image.open(io.BytesIO(resp.content))
                 w, h = im.size
@@ -1187,9 +1194,9 @@ async def whatsapp_webhook(request: Request):
     user_name = form.get("ProfileName", "")
     message_sid = form.get("MessageSid", "")
 
-    # Trigger native WhatsApp 'typing...' indicator immediately on phone
-    if message_sid:
-        asyncio.create_task(send_twilio_typing_indicator(message_sid))
+    # Native typing indicator temporarily disabled for maximum speed as requested
+    # if message_sid:
+    #     asyncio.create_task(send_twilio_typing_indicator(message_sid))
 
     try:
         num_media = int(form.get("NumMedia", "0"))
