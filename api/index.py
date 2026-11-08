@@ -818,6 +818,15 @@ async def home(request: Request):
         .message {{ max-width: 80%; padding: 10px 14px; border-radius: 12px; line-height: 1.45; word-wrap: break-word; font-size: 0.95rem; white-space: pre-wrap; }}
         .user-message {{ background-color: #dcf8c6; align-self: flex-end; border-bottom-right-radius: 2px; box-shadow: 0 1px 1px rgba(0,0,0,0.1); }}
         .bot-message {{ background-color: #ffffff; align-self: flex-start; border-bottom-left-radius: 2px; box-shadow: 0 1px 1px rgba(0,0,0,0.1); }}
+        .typing-indicator {{ display: flex; align-items: center; gap: 4px; padding: 12px 16px; width: fit-content; background: #ffffff; border-radius: 12px; border-bottom-left-radius: 2px; box-shadow: 0 1px 1px rgba(0,0,0,0.1); }}
+        .typing-dot {{ width: 7px; height: 7px; background: #8696a0; border-radius: 50%; animation: typingBounce 1.4s infinite ease-in-out; }}
+        .typing-dot:nth-child(1) {{ animation-delay: 0s; }}
+        .typing-dot:nth-child(2) {{ animation-delay: 0.2s; }}
+        .typing-dot:nth-child(3) {{ animation-delay: 0.4s; }}
+        @keyframes typingBounce {{
+            0%, 60%, 100% {{ transform: translateY(0); opacity: 0.35; }}
+            30% {{ transform: translateY(-5px); opacity: 1; }}
+        }}
         .input-area {{ background-color: #f0f0f0; padding: 12px; display: flex; gap: 8px; align-items: center; }}
         input[type="text"] {{ flex: 1; padding: 12px 16px; border: none; border-radius: 24px; outline: none; font-size: 1rem; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }}
         button {{ background-color: #128c7e; color: white; border: none; padding: 12px 20px; border-radius: 24px; cursor: pointer; font-size: 0.95rem; font-weight: 600; transition: background-color 0.2s; }}
@@ -828,17 +837,20 @@ async def home(request: Request):
 </head>
 <body>
     <div class="header">
-        <h1>🤖 {BOT_NAME} WhatsApp AI Bot</h1>
+        <div style="display: flex; flex-direction: column;">
+            <h1>🤖 {BOT_NAME} WhatsApp AI Bot</h1>
+            <span id="chat-header-status" style="font-size: 0.8rem; color: #d1f2eb; margin-top: 2px;">online</span>
+        </div>
         <div style="display: flex; gap: 10px; align-items: center;">
-            <span class="badge">● Online & Ready</span>
+            <span class="badge">● Ready</span>
             <button class="btn-clear" onclick="resetChat()">Reset Memory</button>
         </div>
     </div>
     <div class="info-bar">
-        ⚡ <b>Mitra Supercharged</b>: 🎨 AI Image Generator (FLUX.1) | 🧠 GPT-OSS 120B | 📚 PDF/Doc Analysis | 🎙️ Voice | 📷 Vision | 🌐 Web Search
+        ⚡ <b>Mitra Supercharged</b>: 🎨 AI Image Generator (Ultra-HD, No Watermark) | 🧠 GPT-OSS 120B | 📚 PDF/Doc Analysis | 🎙️ Voice | 📷 Vision | 🌐 Web Search
     </div>
     <div class="chat-container" id="chat-container">
-        <div class="message bot-message">🤖 *{BOT_NAME}*:\n\nNamaste! I am Mitra, proudly created and engineered by *Gourav Dadheech*. 👨‍💻🚀\n\nI can generate stunning AI images (FLUX.1), guide you through college units & PDFs, search the live web, transcribe voice notes, and answer anything with long-term memory! Try typing "photo banao a futuristic cyber car" or ask me anything!</div>
+        <div class="message bot-message">🤖 *{BOT_NAME}*:\n\nNamaste! I am Mitra, proudly created and engineered by *Gourav Dadheech*. 👨‍💻🚀\n\nI can generate stunning AI images without watermarks, guide you through college units & PDFs, search the live web, transcribe voice notes, and answer anything with long-term memory! Try typing "photo banao lenovo loq laptop coming out of lava" or ask me anything!</div>
     </div>
     <div class="input-area">
         <input type="text" id="message-input" placeholder="Type a message or 'help'..." onkeypress="handleKeyPress(event)" autofocus>
@@ -854,6 +866,35 @@ async def home(request: Request):
 
         const chatContainer = document.getElementById('chat-container');
         const messageInput = document.getElementById('message-input');
+
+        function showTypingIndicator() {{
+            const statusEl = document.getElementById('chat-header-status');
+            if (statusEl) {{
+                statusEl.textContent = 'typing...';
+                statusEl.style.fontWeight = 'bold';
+                statusEl.style.color = '#25d366';
+            }}
+            const existing = document.getElementById('typing-indicator-bubble');
+            if (!existing) {{
+                const bubble = document.createElement('div');
+                bubble.id = 'typing-indicator-bubble';
+                bubble.className = 'message bot-message typing-indicator';
+                bubble.innerHTML = '<div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div>';
+                chatContainer.appendChild(bubble);
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+            }}
+        }}
+
+        function hideTypingIndicator() {{
+            const statusEl = document.getElementById('chat-header-status');
+            if (statusEl) {{
+                statusEl.textContent = 'online';
+                statusEl.style.fontWeight = 'normal';
+                statusEl.style.color = '#d1f2eb';
+            }}
+            const bubble = document.getElementById('typing-indicator-bubble');
+            if (bubble) bubble.remove();
+        }}
 
         function addMessage(text, isUser) {{
             const msgDiv = document.createElement('div');
@@ -873,6 +914,7 @@ async def home(request: Request):
 
             addMessage(text, true);
             messageInput.value = '';
+            showTypingIndicator();
 
             try {{
                 const response = await fetch('/api/chat', {{
@@ -881,8 +923,10 @@ async def home(request: Request):
                     body: JSON.stringify({{ message: text, user_id: userId }})
                 }});
                 const data = await response.json();
+                hideTypingIndicator();
                 addMessage(`🤖 *{BOT_NAME}*:\\n\\n${{data.response}}`, false);
             }} catch (error) {{
+                hideTypingIndicator();
                 addMessage("⚠️ Error connecting to server. Please try again.", false);
             }}
         }}
@@ -988,6 +1032,55 @@ async def verify_webhook(request: Request):
     }
 
 
+async def send_twilio_typing_indicator(message_sid: str):
+    """Triggers the official native WhatsApp 'typing...' indicator on the user's phone via Twilio."""
+    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+    auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+    if not account_sid or not auth_token or not message_sid:
+        return
+
+    url = "https://messaging.twilio.com/v3/Indicators/Typing.json"
+    payload = {
+        "channel": "WHATSAPP",
+        "messageId": message_sid
+    }
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            await client.post(
+                url,
+                auth=(account_sid, auth_token),
+                headers={"Content-Type": "application/json"},
+                json=payload
+            )
+    except Exception as e:
+        print(f"Twilio typing indicator error: {e}")
+
+
+async def send_meta_typing_indicator(phone_number_id: str, message_id: str, meta_token: str):
+    """Triggers the official native WhatsApp 'typing...' indicator via Meta Cloud API."""
+    if not phone_number_id or not message_id or not meta_token:
+        return
+
+    url = f"https://graph.facebook.com/v21.0/{phone_number_id}/messages"
+    payload = {
+        "messaging_product": "whatsapp",
+        "status": "read",
+        "message_id": message_id,
+        "typing_indicator": {
+            "type": "text"
+        }
+    }
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            await client.post(
+                url,
+                headers={"Authorization": f"Bearer {meta_token}", "Content-Type": "application/json"},
+                json=payload
+            )
+    except Exception as e:
+        print(f"Meta typing indicator error: {e}")
+
+
 async def handle_meta_whatsapp(request: Request):
     """Processes Meta WhatsApp Cloud API incoming JSON messages."""
     try:
@@ -1003,11 +1096,17 @@ async def handle_meta_whatsapp(request: Request):
                 for msg in messages:
                     user_id = msg.get("from")
                     user_msg = msg.get("text", {}).get("body", "")
+                    message_id = msg.get("id")
+                    meta_token = os.getenv("WHATSAPP_TOKEN")
+                    phone_number_id = value.get("metadata", {}).get("phone_number_id")
+
+                    # Trigger native WhatsApp typing indicator popup immediately
+                    if phone_number_id and message_id and meta_token:
+                        asyncio.create_task(send_meta_typing_indicator(phone_number_id, message_id, meta_token))
+
                     if user_id and user_msg:
                         answer = await generate_mitra_reply(user_msg, user_id, user_name)
                         
-                        meta_token = os.getenv("WHATSAPP_TOKEN")
-                        phone_number_id = value.get("metadata", {}).get("phone_number_id")
                         if meta_token and phone_number_id:
                             reply_text = f"🤖 *{BOT_NAME}*:\n\n{answer}"
                             async with httpx.AsyncClient() as http_client:
@@ -1048,6 +1147,11 @@ async def whatsapp_webhook(request: Request):
     user_msg = form.get("Body", "").strip()
     user_id = form.get("From", "unknown")
     user_name = form.get("ProfileName", "")
+    message_sid = form.get("MessageSid", "")
+
+    # Trigger native WhatsApp 'typing...' indicator immediately on phone
+    if message_sid:
+        asyncio.create_task(send_twilio_typing_indicator(message_sid))
 
     try:
         num_media = int(form.get("NumMedia", "0"))

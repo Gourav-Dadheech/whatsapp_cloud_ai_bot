@@ -51,6 +51,13 @@ long-term conversation memory with 100% individual user isolation.
     "live score", "stock/crypto price", or explicit commands like "/search <query>".
   - DuckDuckGo live search integration delivers fact-checked real-time answers.
 
+• 💬 Native WhatsApp "typing..." Indicator & Read Receipts:
+  - While Mitra thinks, reasons, or generates images, a native WhatsApp "... typing"
+    status bubble appears under the contact name on the user's phone.
+  - Automatically marks incoming messages with blue ticks (read receipt).
+  - Web chat preview displays an authentic WhatsApp animated 3-dot typing bubble
+    and green "typing..." header status.
+
 • 🎙️ WhatsApp Voice Note Transcription:
   - Send audio voice notes directly on WhatsApp.
   - Transcribed in ~300ms using Groq Whisper-large-v3-turbo.
