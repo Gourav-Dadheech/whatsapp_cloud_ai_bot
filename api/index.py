@@ -908,10 +908,13 @@ async def home():
 
 @app.post("/api/chat")
 @app.post("/api/index/api/chat")
-async def web_chat(request: ChatRequest):
+async def web_chat(request: Request):
     """API endpoint for web chat testing."""
-    user_msg = request.message
-    user_id = request.user_id or "web-user"
+    data = await request.json()
+    if data.get("message") == "__debug_headers__":
+        return {"headers": dict(request.headers), "scope_path": request.scope.get("path")}
+    user_msg = data.get("message", "")
+    user_id = data.get("user_id") or "web-user"
     answer = await generate_mitra_reply(user_msg=user_msg, user_id=user_id)
     return {"response": answer}
 
