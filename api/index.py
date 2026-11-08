@@ -794,8 +794,14 @@ async def vercel_routing_middleware(request: Request, call_next):
 @app.get("/")
 @app.get("/api/index")
 @app.get("/api/index/")
-async def home():
+async def home(request: Request):
     """Web preview page for browser testing and server health checking."""
+    params = request.query_params
+    if "p" in params:
+        seed = int(params.get("seed", 42))
+        return await clean_image(p=params["p"], seed=seed)
+    elif "hub.mode" in params:
+        return await verify_webhook(request)
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -908,13 +914,10 @@ async def home():
 
 @app.post("/api/chat")
 @app.post("/api/index/api/chat")
-async def web_chat(request: Request):
+async def web_chat(request: ChatRequest):
     """API endpoint for web chat testing."""
-    data = await request.json()
-    if data.get("message") == "__debug_headers__":
-        return {"headers": dict(request.headers), "scope_path": request.scope.get("path")}
-    user_msg = data.get("message", "")
-    user_id = data.get("user_id") or "web-user"
+    user_msg = request.message
+    user_id = request.user_id or "web-user"
     answer = await generate_mitra_reply(user_msg=user_msg, user_id=user_id)
     return {"response": answer}
 
@@ -1229,12 +1232,12 @@ async def root_post_fallback(request: Request):
     if "application/json" in content_type:
         try:
             data = await request.json()
-            if data.get("message") == "__debug_headers__":
-                return {"headers": dict(request.headers), "scope": {k: str(v) for k, v in request.scope.items() if k in ["path", "raw_path", "root_path", "query_string"]}}
             if "message" in data:
-                return await web_chat(Request(**data) if isinstance(data, dict) else data)
-        except Exception as e:
-            return {"error": str(e)}
+                return await web_chat(ChatRequest(**data))
+            elif "entry" in data:
+                return await handle_meta_whatsapp(request)
+        except Exception:
+            pass
     if "application/x-www-form-urlencoded" in content_type:
         return await whatsapp_webhook(request)
     return Response(content="Invalid request format", status_code=400)
