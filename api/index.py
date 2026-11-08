@@ -3,6 +3,7 @@ import sys
 import io
 import asyncio
 import base64
+import urllib.parse
 import zipfile
 import xml.etree.ElementTree as ET
 import httpx
@@ -169,7 +170,7 @@ async def transcribe_audio(audio_bytes: bytes, filename: str = "voice.ogg") -> s
     return ""
 
 
-async def analyze_image_with_vision(image_bytes: bytes, content_type: str, caption: str = "", user_id: str = "") -> str:
+async def analyze_image_with_vision(image_bytes: bytes, content_type: str, caption: str = "", user_id: str = "", image_url: str = "") -> str:
     """Analyzes photos, icons, homework, receipts, and objects using Groq Multimodal Vision."""
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
@@ -219,13 +220,231 @@ User's question: {question}"""
         )
         answer = response.choices[0].message.content.strip()
         if user_id:
-            save_active_image(user_id, question, answer)
+            save_active_image(user_id, question, answer, image_url=image_url)
             save_memory(user_id, "user", f"[Sent an Image: {question}]")
             save_memory(user_id, "assistant", answer)
         return answer
     except Exception as e:
         print(f"Vision error: {e}")
         return f"Photo analyze karne mein issue aaya ({str(e)[:70]}). Please try sending again!"
+
+
+async def analyze_bill_and_split(image_bytes: bytes, user_instruction: str = "", user_id: str = "") -> str:
+    """Analyzes a receipt, restaurant bill, or expense invoice, extracts items, taxes, and calculates per-person split."""
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        return "⚠️ GROQ_API_KEY is not set."
+
+    client = AsyncGroq(api_key=api_key)
+    b64_image = base64.b64encode(image_bytes).decode("utf-8")
+    data_url = f"data:image/jpeg;base64,{b64_image}"
+
+    instruction = user_instruction.strip() if user_instruction.strip() else "Split this bill equally"
+
+    prompt_text = f"""You are Mitra AI, an expert Expense & Bill Splitter assistant on WhatsApp.
+
+TASK:
+1. Examine this receipt, bill, or invoice image thoroughly.
+2. Extract:
+   - Merchant / Store / Restaurant Name
+   - Date & Invoice number (if visible)
+   - Key itemized line items with individual prices
+   - Subtotal, Tax/GST/Service charges, Discounts, and Grand Total Amount.
+3. Calculate the split according to the user's instructions: "{instruction}".
+   - If the user specifies the number of people (e.g. "split among 4" or names: "Gourav, Aman, Rohan, Priya"), divide the grand total accurately.
+   - If no number is mentioned, default to splitting between 2 people and show per-person share.
+4. Output in clean, beautiful WhatsApp markdown with emojis:
+   - Bold headings (*...*)
+   - Bullet points (•)
+   - Clear lines dividing sections
+   - Prominently highlight: *Grand Total* and *Share Per Person*!"""
+
+    try:
+        response = await asyncio.wait_for(
+            client.chat.completions.create(
+                model="qwen/qwen3.8-27b",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt_text},
+                            {"type": "image_url", "image_url": {"url": data_url}}
+                        ]
+                    }
+                ],
+                temperature=0.2,
+                max_tokens=850
+            ),
+            timeout=15.0
+        )
+        answer = response.choices[0].message.content.strip()
+        if user_id:
+            save_memory(user_id, "user", f"[Sent Bill / Receipt: {instruction}]")
+            save_memory(user_id, "assistant", answer)
+        return answer
+    except Exception as e:
+        print(f"Bill split error: {e}")
+        return f"Bill analyze karne mein issue aaya ({str(e)[:70]}). Please send a clear photo again!"
+
+
+def extract_quiz_trigger(msg: str) -> tuple[str, str] | None:
+    """
+    Detects if the user wants an interactive quiz, exam test, or formula cheat-sheet.
+    Returns (mode, topic) where mode is 'quiz' or 'cheatsheet', or None.
+    """
+    import re
+    m = msg.strip().lower()
+
+    # 1. Explicit slash commands
+    for pfx in ["/quiz", "/exam", "/test"]:
+        if m == pfx or m.startswith(pfx + " "):
+            return ("quiz", msg.strip()[len(pfx):].strip(" :,-"))
+    for pfx in ["/formulas", "/formula", "/cheatsheet", "/cheat-sheet"]:
+        if m == pfx or m.startswith(pfx + " "):
+            return ("cheatsheet", msg.strip()[len(pfx):].strip(" :,-"))
+
+    # 2. Natural language triggers for quiz
+    quiz_nlp = [
+        r'^(?:can you\s+)?(?:please\s+)?(?:take|give|start|make|create|generate)\s+(?:me\s+)?(?:a\s+)?(?:quiz|test|mock test|exam)\s*(?:on|for|about)?\s*(.*)$',
+        r'^(?:quiz|test)\s+me\s*(?:on|about)?\s*(.*)$',
+        r'^(?:mujhe\s+)?(?:ek\s+)?quiz\s+(?:lo|karo|banao|dijiye)\s*(?:on|pe|par|about)?\s*(.*)$',
+    ]
+    for pat in quiz_nlp:
+        match = re.search(pat, m, re.IGNORECASE)
+        if match:
+            return ("quiz", match.group(1).strip(" :,-"))
+
+    # 3. Natural language triggers for formula / cheatsheet
+    cheat_nlp = [
+        r'^(?:can you\s+)?(?:please\s+)?(?:give|make|create|generate|provide)\s+(?:me\s+)?(?:a\s+)?(?:formula sheet|formulas|cheatsheet|cheat sheet|summary sheet)\s*(?:for|of|on)?\s*(.*)$',
+        r'^(?:formula sheet|formulas|cheatsheet|cheat sheet)\s*(?:for|of|on)?\s*(.*)$',
+        r'^(?:formula|cheatsheet)\s+banao\s*(?:for|of|on|pe|par)?\s*(.*)$'
+    ]
+    for pat in cheat_nlp:
+        match = re.search(pat, m, re.IGNORECASE)
+        if match:
+            return ("cheatsheet", match.group(1).strip(" :,-"))
+
+    return None
+
+
+def extract_sticker_trigger(msg: str) -> bool:
+    """Detects if user is asking to convert the active photo/image into a WhatsApp sticker."""
+    m = msg.strip().lower()
+    if m in ["/sticker", "sticker", "make sticker", "create sticker"]:
+        return True
+    if any(k in m for k in ["sticker bana do", "sticker banao", "make this a sticker", "convert to sticker", "sticker chahiye"]):
+        return True
+    if m.startswith("/sticker"):
+        return True
+    return False
+
+
+def is_bill_split_request(msg: str) -> bool:
+    """Detects if user message is requesting bill or expense splitting."""
+    m = msg.strip().lower()
+    for pfx in ["/bill", "/split", "/hisab", "bill:", "split:", "hisab:"]:
+        if m.startswith(pfx):
+            return True
+    bill_keywords = ["split bill", "bill split", "split the bill", "hisab kar do", "kharcha split", "expense split", "split expense", "hisab banao"]
+    return any(k in m for k in bill_keywords)
+
+
+async def generate_quiz_or_cheatsheet(cmd_type: str, topic: str, user_id: str = "", user_name: str = "") -> str:
+    """
+    Generates an interactive MCQ quiz or formula cheat-sheet based on the active
+    uploaded document or a user-provided topic.
+    """
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        return "⚠️ GROQ_API_KEY is not set."
+
+    client = AsyncGroq(api_key=api_key)
+    active_doc = get_active_document(user_id) if user_id else None
+
+    has_doc = bool(active_doc and active_doc.get("extracted_text"))
+    doc_text = active_doc.get("extracted_text", "")[:7000] if has_doc else ""
+    doc_name = active_doc.get("doc_name", "Document") if has_doc else ""
+
+    if not topic and not has_doc:
+        if cmd_type == "quiz":
+            return (
+                "🎯 *Interactive Quiz & Exam Prep Mode*\n━━━━━━━━━━━━━━\n"
+                "I can generate an interactive quiz to test your preparation!\n\n"
+                "👉 *How to use*:\n"
+                "1. 📄 *Upload a PDF/PPT notes or paper*, then type */quiz* to get tested directly on your syllabus!\n"
+                "2. 💡 *Or type a topic*: e.g. */quiz Python*, */quiz Indian History*, */quiz Thermodynamics*, */quiz Class 12 Physics*\n\n"
+                "What topic would you like to practice today? 🚀"
+            )
+        else:
+            return (
+                "📐 *Formula & Quick Revision Cheat-Sheet*\n━━━━━━━━━━━━━━\n"
+                "I can synthesize a high-yield formula cheat-sheet for you!\n\n"
+                "👉 *How to use*:\n"
+                "1. 📄 *Upload your syllabus/notes PDF*, then type */formulas* or */cheatsheet*.\n"
+                "2. 💡 *Or type a topic*: e.g. */formulas Calculus*, */cheatsheet SQL Queries*, */formulas Mechanics*\n\n"
+                "Which subject or chapter do you need a cheat-sheet for? 📚"
+            )
+
+    subject_title = topic if topic else f"{doc_name} Notes"
+
+    if cmd_type == "quiz":
+        system_instruction = f"""You are Mitra AI, an expert exam tutor on WhatsApp.
+Create a high-yield, interactive 3-question Multiple Choice Quiz (MCQ) testing key concepts of: "{subject_title}".
+{"Source Document Text:\n\"\"\"\n" + doc_text + "\n\"\"\"" if has_doc else ""}
+
+QUIZ FORMAT RULES:
+- Include exactly 3 questions (*Q1.*, *Q2.*, *Q3.*).
+- Each question must have 4 distinct options: A), B), C), D).
+- Questions should test real understanding, key formulas, or definitions.
+- DO NOT reveal the correct answers in this initial quiz message!
+- End with:
+━━━━━━━━━━━━━━
+👉 *Reply with your options* (e.g. *1-A, 2-C, 3-B*) to check your score and see full step-by-step explanations! 🏆"""
+
+    else:
+        system_instruction = f"""You are Mitra AI, an elite academic and technical mentor on WhatsApp.
+Create a comprehensive, high-yield Formula & Concept Revision Cheat-Sheet for: "{subject_title}".
+{"Source Document Text:\n\"\"\"\n" + doc_text + "\n\"\"\"" if has_doc else ""}
+
+CHEAT-SHEET FORMAT RULES:
+- Structure clearly with bold headers (*...*), emojis, and bullet points (•).
+- Include essential formulas, notation definitions, standard units, key theorems/rules, and quick memory shortcuts/mnemonics.
+- Keep each formula readable and well-explained.
+- Add 2-3 common exam traps or pitfalls to avoid.
+- Fit within a clean, concise WhatsApp format."""
+
+    models = [
+        os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"),
+        "openai/gpt-oss-120b",
+        "qwen/qwen3.8-27b"
+    ]
+    models = list(dict.fromkeys(models))
+
+    for model_name in models:
+        try:
+            resp = await asyncio.wait_for(
+                client.chat.completions.create(
+                    model=model_name,
+                    messages=[
+                        {"role": "user", "content": system_instruction}
+                    ],
+                    temperature=0.3,
+                    max_tokens=900
+                ),
+                timeout=12.0
+            )
+            content = resp.choices[0].message.content.strip()
+            if content:
+                if user_id:
+                    save_memory(user_id, "user", f"[Requested {cmd_type.title()}: {subject_title}]")
+                    save_memory(user_id, "assistant", content)
+                return content
+        except Exception as e:
+            print(f"Quiz/Cheatsheet model {model_name} error: {e}")
+            continue
+
+    return f"Unable to generate {cmd_type} right now. Please try again in a moment!"
 
 
 def check_creator_query(msg: str) -> str | None:
@@ -606,7 +825,7 @@ async def generate_mitra_reply(user_msg: str, user_id: str, user_name: str = "")
         enhanced_prompt, image_url = await generate_image_url(img_prompt)
         save_memory(user_id, "user", user_msg)
         save_memory(user_id, "assistant", f"[Generated an image of: {img_prompt}]")
-        save_active_image(user_id, img_prompt, f"Generated AI image of: {enhanced_prompt}")
+        save_active_image(user_id, img_prompt, f"Generated AI image of: {enhanced_prompt}", image_url=image_url)
         return (
             f"🎨 *Generated with Mitra Image AI (Ultra-HD)*\n━━━━━━━━━━━━━━\n"
             f"✨ Prompt: _{img_prompt}_\n\n"
@@ -614,20 +833,58 @@ async def generate_mitra_reply(user_msg: str, user_id: str, user_name: str = "")
             f"🔗 [Open Full Resolution Image (No Watermark)]({image_url})"
         )
 
+    # Custom WhatsApp Sticker Maker Command
+    if extract_sticker_trigger(user_msg):
+        active_img = get_active_image(user_id)
+        if active_img and active_img.get("image_url"):
+            img_src = active_img["image_url"]
+            vercel_url = os.getenv("VERCEL_PROJECT_PRODUCTION_URL") or os.getenv("VERCEL_URL")
+            base_url = f"https://{vercel_url}" if vercel_url else "https://whatsappcloudaibot.vercel.app"
+            if img_src.startswith("/"):
+                img_src = f"{base_url.rstrip('/')}{img_src}"
+            sticker_url = f"{base_url}/sticker?url={urllib.parse.quote(img_src)}"
+            save_memory(user_id, "user", user_msg)
+            save_memory(user_id, "assistant", "Generated custom 512x512 WhatsApp sticker.")
+            return (
+                f"🎭 *WhatsApp Sticker Ready!*\n━━━━━━━━━━━━━━\n"
+                f"Here is your custom 512x512 transparent WebP sticker:\n\n"
+                f'<img src="{sticker_url}" style="max-width:240px; border-radius:12px; background:rgba(0,0,0,0.05); padding:8px;"><br><br>'
+                f"🔗 [Download WebP Sticker]({sticker_url})\n\n"
+                "💡 *On WhatsApp*, this is delivered straight into your chat as a real interactive sticker! ✨"
+            )
+        else:
+            return (
+                f"🎭 *Custom Sticker Maker*\n━━━━━━━━━━━━━━\n"
+                "No active picture found!\n\n"
+                "To create a custom sticker:\n"
+                "1. 📸 Send any photo with caption */sticker*, OR\n"
+                "2. 🎨 First generate an AI image (e.g. *photo banao cute cat*), then reply */sticker*!\n\n"
+                "I will convert it into a 512x512 transparent WhatsApp sticker! ✨"
+            )
+
+    # Interactive Quiz & Formula Cheat-Sheet Command
+    quiz_trigger = extract_quiz_trigger(user_msg)
+    if quiz_trigger:
+        mode, topic = quiz_trigger
+        return await generate_quiz_or_cheatsheet(cmd_type=mode, topic=topic, user_id=user_id, user_name=user_name)
+
     if msg_clean in ["/help", "help", "menu", "/start"]:
         name_str = f" {user_name}" if user_name else ""
         return (
             f"Namaste{name_str}! 🙏 I am *{BOT_NAME}*, your friendly AI companion & smart assistant.\n\n"
             "Here is what I can do for you:\n"
-            "• *Text Chat*: Smart answers with deep reasoning & warm encouragement 💡\n"
-            "• *AI Image Generation*: Type 'photo banao <prompt>' or '/image <prompt>' for stunning FLUX.1 pictures! 🎨✨\n"
-            "• *Documents & PDFs*: Send ANY PDF or PPT (Question Papers, Invoices, Notes) — I remember the full document for multi-turn Q&A! 📄📊\n"
-            "• *Live Web Browsing*: Ask for today's weather, breaking news, match scores, or stock rates (or type '/search <query>') 🌐\n"
+            "• *Text Chat*: Deep reasoning, instant answers & warm encouragement 💡\n"
+            "• *AI Image Generation*: Type 'photo banao <prompt>' or '/image <prompt>' for ultra-HD FLUX.1 art! 🎨✨\n"
+            "• *Custom Sticker Maker*: Send any photo with '/sticker' or reply '/sticker' to any generated image! 🎭\n"
+            "• *Interactive Quiz & Flashcards*: Type '/quiz [topic]' or '/formulas [topic]' for instant exam prep! 🎯📐\n"
+            "• *Bill & Expense Splitter*: Send a receipt photo with '/split 3 friends' or type your expenses! 🧾\n"
+            "• *Documents & PDFs*: Send ANY PDF or PPT (Question Papers, Invoices, Notes) with full memory! 📄📊\n"
+            "• *Live Web Browsing*: Current news, weather, match scores, or stock rates ('/search <query>') 🌐\n"
             "• *Voice Notes*: Send any audio message & I will understand it (Whisper v3) 🎙️\n"
             "• *Photo Analysis*: Send images of homework, code errors, or screens (Vision) 📷\n"
             "• *Languages*: Fluent in English, natural Hinglish, and Hindi 🇮🇳\n"
             "• *Creator*: Proudly engineered with ❤️ by *Gourav Dadheech* 👨‍💻\n"
-            "• Send *reset* anytime to clear conversation, document & photo memory 🧹\n\n"
+            "• Send *reset* anytime to clear conversation & document memory 🧹\n\n"
             "How can I help you today?"
         )
 
@@ -683,6 +940,21 @@ WHATSAPP FORMATTING:
 - Use clean bullet points (•) and lively emojis.
 - Keep answers readable on mobile screens (avoid huge unstructured walls of text).
 - Always finish your sentences and thoughts completely.
+
+INTERACTIVE QUIZ & EXAM PREP GRADING:
+- When the user answers an interactive quiz (e.g. "1-B, 2-C, 3-A", "A, D, B", or states their answer options to a recent quiz in the conversation history):
+  * Check each answer carefully against the questions from the conversation history.
+  * Clearly mark each: ✅ *Q1: Correct!* or ❌ *Q1: Incorrect!* (and show the right option).
+  * Provide a crisp, 1-line conceptual explanation for each.
+  * Tally their final score (e.g. 🏆 *Final Score: 3/3 (100%)* or *2/3*).
+  * Cheer them on warmly like an encouraging mentor and ask if they would like another practice set!
+
+EXPENSE & BILL SPLITTER INTELLIGENCE:
+- When a user asks to split a bill or expenses in text (e.g. "/bill ₹2400 between 4 friends", "split 1500 among Gourav, Rohit, Priya", "hisab karo"), calculate the exact breakdown:
+  * Highlight Grand Total Amount
+  * List names or number of people
+  * Calculate exact per-person share (Total / N)
+  * Clean, itemized bullet points with emojis and bold figures!
 
 CONCISENESS & SINGLE-MESSAGE DELIVERY (VERY IMPORTANT):
 - Keep your answers well-paced and crisp (under 1,200 characters) so that your complete response fits neatly into ONE single WhatsApp message.
@@ -827,6 +1099,9 @@ async def home(request: Request):
     if "p" in params:
         seed = int(params.get("seed", 42))
         return await clean_image(p=params["p"], seed=seed)
+    elif "sticker_url" in params or ("url" in params and "sticker" in str(request.url)):
+        target = params.get("sticker_url") or params.get("url")
+        return await get_sticker(url=target)
     elif "hub.mode" in params:
         return await verify_webhook(request)
     html_content = f"""<!DOCTYPE html>
@@ -874,7 +1149,7 @@ async def home(request: Request):
         </div>
     </div>
     <div class="info-bar">
-        ⚡ <b>Mitra Supercharged</b>: 🎨 AI Image Generator (Ultra-HD, No Watermark) | 🧠 GPT-OSS 120B | 📚 PDF/Doc Analysis | 🎙️ Voice | 📷 Vision | 🌐 Web Search
+        ⚡ <b>Mitra Supercharged</b>: 🎨 AI Image Generator (FLUX.1) | 🎭 Custom Sticker Maker | 📝 Interactive Quiz & Flashcards | 🧾 Expense & Bill Splitter | 📚 PDF/Doc Analysis | 🎙️ Voice | 🌐 Web Search
     </div>
     <div class="chat-container" id="chat-container">
         <div class="message bot-message">🤖 *{BOT_NAME}*:\n\nNamaste! I am Mitra, proudly created and engineered by *Gourav Dadheech*. 👨‍💻🚀\n\nI can generate stunning AI images without watermarks, guide you through college units & PDFs, search the live web, transcribe voice notes, and answer anything with long-term memory! Try typing "photo banao lenovo loq laptop coming out of lava" or ask me anything!</div>
@@ -1049,6 +1324,56 @@ async def clean_image(p: str, seed: int = 42):
         print(f"Clean image proxy error: {e}")
 
     return RedirectResponse(url=raw_url)
+
+
+@app.get("/sticker")
+@app.get("/api/sticker")
+@app.get("/api/index/sticker")
+@app.get("/api/index/api/sticker")
+async def get_sticker(url: str):
+    """
+    Downloads an image from URL, resizes to 512x512 with transparent padding,
+    and returns a genuine WhatsApp-compliant WebP sticker.
+    """
+    import io
+    from PIL import Image
+
+    if not url:
+        return Response(content="Missing url parameter", status_code=400)
+
+    if url.startswith("/"):
+        vercel_url = os.getenv("VERCEL_PROJECT_PRODUCTION_URL") or os.getenv("VERCEL_URL")
+        base_domain = f"https://{vercel_url}" if vercel_url else "https://whatsappcloudaibot.vercel.app"
+        url = f"{base_domain.rstrip('/')}{url}"
+
+    sid = os.getenv("TWILIO_ACCOUNT_SID")
+    token = os.getenv("TWILIO_AUTH_TOKEN")
+    auth = httpx.BasicAuth(sid, token) if (sid and token and "twilio" in url.lower()) else None
+
+    try:
+        async with httpx.AsyncClient(timeout=25.0, follow_redirects=True) as client:
+            resp = await client.get(url, auth=auth)
+            if resp.status_code == 200:
+                im = Image.open(io.BytesIO(resp.content)).convert("RGBA")
+                # Scale down to fit within 512x512
+                im.thumbnail((512, 512), Image.Resampling.LANCZOS)
+                canvas = Image.new("RGBA", (512, 512), (0, 0, 0, 0))
+                offset = ((512 - im.width) // 2, (512 - im.height) // 2)
+                canvas.paste(im, offset)
+
+                buf = io.BytesIO()
+                canvas.save(buf, format="WEBP", quality=85)
+                return Response(
+                    content=buf.getvalue(),
+                    media_type="image/webp",
+                    headers={
+                        "Cache-Control": "public, max-age=604800, immutable",
+                        "Content-Disposition": "inline; filename=mitra_sticker.webp"
+                    }
+                )
+    except Exception as e:
+        print(f"Sticker endpoint error: {e}")
+    return Response(content="Sticker generation failed", status_code=500)
 
 
 @app.get("/whatsapp")
@@ -1244,7 +1569,34 @@ async def whatsapp_webhook(request: Request):
     elif num_media > 0 and media_url and media_type.startswith("image/"):
         try:
             image_bytes, ct = await download_media(media_url)
-            vision_answer = await analyze_image_with_vision(image_bytes, ct, caption=user_msg, user_id=user_id)
+
+            # Check 1: User requested a WhatsApp Sticker
+            if extract_sticker_trigger(user_msg):
+                vercel_url = os.getenv("VERCEL_PROJECT_PRODUCTION_URL") or os.getenv("VERCEL_URL")
+                base_url = f"https://{vercel_url}" if vercel_url else "https://whatsappcloudaibot.vercel.app"
+                sticker_url = f"{base_url}/sticker?url={urllib.parse.quote(media_url)}"
+                save_active_image(user_id, user_msg, "Converted photo into 512x512 transparent WebP WhatsApp sticker", image_url=media_url)
+                save_memory(user_id, "user", f"[Sent photo for sticker: {user_msg}]")
+                save_memory(user_id, "assistant", "Generated custom 512x512 WhatsApp sticker.")
+                twilio_resp = MessagingResponse()
+                msg = twilio_resp.message(
+                    f"🤖 *{BOT_NAME} AI* (🎭 Custom Sticker)\n━━━━━━━━━━━━━━\n"
+                    "Here is your custom 512x512 WhatsApp sticker! ✨"
+                )
+                msg.media(sticker_url)
+                return Response(content=str(twilio_resp), media_type="application/xml")
+
+            # Check 2: User requested a Bill / Expense Split
+            if is_bill_split_request(user_msg):
+                bill_answer = await analyze_bill_and_split(image_bytes, user_instruction=user_msg, user_id=user_id)
+                save_active_image(user_id, user_msg, f"Bill/Receipt Analysis: {bill_answer[:500]}", image_url=media_url)
+                reply_body = f"🤖 *{BOT_NAME} AI* (🧾 Expense & Bill Splitter)\n━━━━━━━━━━━━━━\n{bill_answer}"
+                twilio_resp = MessagingResponse()
+                add_twilio_messages(twilio_resp, reply_body)
+                return Response(content=str(twilio_resp), media_type="application/xml")
+
+            # Default: Multimodal vision analysis
+            vision_answer = await analyze_image_with_vision(image_bytes, ct, caption=user_msg, user_id=user_id, image_url=media_url)
             reply_body = f"🤖 *{BOT_NAME} AI* (📷 Vision)\n━━━━━━━━━━━━━━\n{vision_answer}"
             twilio_resp = MessagingResponse()
             add_twilio_messages(twilio_resp, reply_body)
@@ -1343,6 +1695,37 @@ async def whatsapp_webhook(request: Request):
     if not user_msg:
         user_msg = "Hello"
 
+    # Check if user asked for a custom sticker from active picture
+    if extract_sticker_trigger(user_msg):
+        active_img = get_active_image(user_id)
+        if active_img and active_img.get("image_url"):
+            vercel_url = os.getenv("VERCEL_PROJECT_PRODUCTION_URL") or os.getenv("VERCEL_URL")
+            base_url = f"https://{vercel_url}" if vercel_url else "https://whatsappcloudaibot.vercel.app"
+            img_src = active_img["image_url"]
+            if img_src.startswith("/"):
+                img_src = f"{base_url.rstrip('/')}{img_src}"
+            sticker_url = f"{base_url}/sticker?url={urllib.parse.quote(img_src)}"
+            twilio_resp = MessagingResponse()
+            msg = twilio_resp.message(
+                f"🤖 *{BOT_NAME} AI* (🎭 Custom Sticker)\n━━━━━━━━━━━━━━\n"
+                "Here is your custom 512x512 WhatsApp sticker from your last picture! ✨"
+            )
+            msg.media(sticker_url)
+            save_memory(user_id, "user", user_msg)
+            save_memory(user_id, "assistant", "Generated custom WhatsApp sticker from active image.")
+            return Response(content=str(twilio_resp), media_type="application/xml")
+        else:
+            twilio_resp = MessagingResponse()
+            twilio_resp.message(
+                f"🤖 *{BOT_NAME} AI* (🎭 Sticker Maker)\n━━━━━━━━━━━━━━\n"
+                "No active picture found!\n\n"
+                "To make a sticker:\n"
+                "1. 📸 Send any photo with caption */sticker*, OR\n"
+                "2. 🎨 First generate an AI image (e.g. *photo banao cute cat*), then reply */sticker*!\n\n"
+                "I will convert it into a 512x512 transparent WhatsApp sticker! ✨"
+            )
+            return Response(content=str(twilio_resp), media_type="application/xml")
+
     # Check if user asked for AI image generation on WhatsApp
     img_prompt = extract_image_prompt(user_msg)
     if img_prompt:
@@ -1359,12 +1742,13 @@ async def whatsapp_webhook(request: Request):
             msg = twilio_resp.message(
                 f"🤖 *{BOT_NAME} AI* (🎨 Ultra-HD Image)\n━━━━━━━━━━━━━━\n"
                 f"✨ *Prompt*: _{img_prompt}_\n\n"
-                "Here is your generated image! 🖼️"
+                "Here is your generated image! 🖼️\n\n"
+                "💡 *Tip*: Reply */sticker* anytime to turn this picture into a WhatsApp sticker!"
             )
             msg.media(image_url)
             save_memory(user_id, "user", user_msg)
             save_memory(user_id, "assistant", f"[Generated AI image of: {img_prompt}]")
-            save_active_image(user_id, img_prompt, f"Generated AI image of: {enhanced_prompt}")
+            save_active_image(user_id, img_prompt, f"Generated AI image of: {enhanced_prompt}", image_url=image_url)
             return Response(content=str(twilio_resp), media_type="application/xml")
         except Exception as e:
             print(f"WhatsApp image generation error: {e}")

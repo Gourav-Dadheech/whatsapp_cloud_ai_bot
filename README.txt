@@ -29,11 +29,31 @@ long-term conversation memory with 100% individual user isolation.
   - Fluent in English, natural Hinglish, and Devanagari Hindi.
 
 • 🎨 High-Definition AI Image Generation (FLUX.1):
-  - Generate ultra-detailed, photorealistic images directly in WhatsApp.
+  - Generate ultra-detailed, photorealistic images directly in WhatsApp without watermarks.
+  - Powered by Black Forest Labs FLUX.1 Schnell via Pollinations API.
   - Triggers: "photo banao <anything>", "/image <prompt>", "/imagine <prompt>",
     "generate an image of <prompt>".
   - Uses Groq Qwen 27B for vivid cinematic prompt enhancement paired with FLUX.1.
   - Returns direct high-res JPEG image previews directly inside WhatsApp chats.
+
+• 🎭 Custom WhatsApp Sticker Maker:
+  - Turn ANY photo, screenshot, or generated AI image into an authentic WhatsApp sticker.
+  - Transparent 512x512 WebP formatting compliant with WhatsApp sticker specs.
+  - Triggers: Send photo with caption "/sticker" or "sticker bana do", OR reply
+    "/sticker" to any previously generated image.
+
+• 🎯 Interactive Exam Quiz & Formula Cheat-Sheet Mode:
+  - Auto-generate 3-4 interactive MCQs testing your uploaded syllabus, notes, or any topic.
+  - Interactive grading: Reply with your options (e.g. "1-A, 2-C, 3-B") to get instant
+    score calculations, correct answers, and concise explanations.
+  - High-yield Formula Cheat-Sheets with exam traps, mnemonics, and definitions.
+  - Triggers: "/quiz [topic]", "/exam [topic]", "/formulas [topic]", "/cheatsheet [topic]".
+
+• 🧾 Instant Bill & Expense Splitter:
+  - Extract line items, subtotals, GST/service taxes, and grand totals from restaurant receipts.
+  - Calculates accurate per-person share with clean bullet points and emojis.
+  - Works on receipt photos (via Groq Vision) or direct text (e.g. "/split ₹2400 among 4 friends").
+  - Triggers: Send bill photo with caption "/split 3 friends" or "/bill", or text "/split ...".
 
 • 🧠 Active Multi-Turn Recall (Photos & Documents Continuity):
   - Solves the common AI limitation where follow-up questions lose track of previous
@@ -151,10 +171,12 @@ MAX_MEMORY_MESSAGES       - History turns retained per user (default: 50)
 6. FUTURE ROADMAP & PLANNED INNOVATIONS
 --------------------------------------------------------------------------------
 [x] Real-time Web Search & Browsing (DuckDuckGo integration)
-[x] AI Image Generation with FLUX.1
+[x] AI Image Generation with FLUX.1 (No watermarks)
 [x] Active Document & Photo Multi-turn Memory Recall
-[ ] Interactive Quiz & Flashcard Mode: Auto-generate flashcards from uploaded study notes
-[ ] Audio Voice Reply: Send spoken voice audio back to user using ElevenLabs / edge-tts
+[x] Custom WhatsApp Sticker Maker (/sticker, 512x512 WebP)
+[x] Interactive Quiz & Formula Cheat-Sheet Mode (/quiz, /formulas)
+[x] Instant Bill & Expense Splitter (/bill, /split, hisab)
+[ ] Audio Voice Reply: Send selective spoken voice audio back using ElevenLabs / edge-tts
 [ ] Code Execution Sandbox: Run small Python snippets in real-time to verify math calculations
 [ ] WhatsApp Interactive Buttons & List Menus (via Meta Cloud API)
 

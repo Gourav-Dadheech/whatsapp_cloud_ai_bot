@@ -226,11 +226,12 @@ def get_active_image(user_id: str) -> dict | None:
     _load_img_cache()
     return active_images.get(user_id)
 
-def save_active_image(user_id: str, caption: str, description: str):
-    """Saves the latest analyzed image description for follow-up questions."""
+def save_active_image(user_id: str, caption: str, description: str, image_url: str = ""):
+    """Saves the latest analyzed image description and optional image URL for follow-up questions & stickers."""
     img_data = {
         "caption": caption,
-        "description": description[:4000]
+        "description": description[:4000],
+        "image_url": image_url
     }
     _load_img_cache()
     active_images[user_id] = img_data
