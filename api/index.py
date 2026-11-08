@@ -777,13 +777,17 @@ Use the live search results above to provide a fact-checked, up-to-date answer w
 @app.middleware("http")
 async def vercel_routing_middleware(request: Request, call_next):
     """Normalize paths rewritten by Vercel serverless functions."""
-    matched = request.headers.get("x-matched-path")
-    if matched:
-        request.scope["path"] = matched
-    elif request.scope.get("path") in ["/api/index", "/api/index/"]:
-        request.scope["path"] = "/"
-    elif request.scope.get("path", "").startswith("/api/index/"):
-        request.scope["path"] = request.scope["path"][len("/api/index"):]
+    invoke_path = request.headers.get("x-invoke-path")
+    if invoke_path:
+        request.scope["path"] = invoke_path
+    else:
+        matched = request.headers.get("x-matched-path")
+        if matched and matched not in ["/api/index", "/api/index/"]:
+            request.scope["path"] = matched
+        elif request.scope.get("path") in ["/api/index", "/api/index/"]:
+            request.scope["path"] = "/"
+        elif request.scope.get("path", "").startswith("/api/index/"):
+            request.scope["path"] = request.scope["path"][len("/api/index"):]
     return await call_next(request)
 
 
@@ -912,7 +916,9 @@ async def web_chat(request: ChatRequest):
     return {"response": answer}
 
 
+@app.get("/clean-image")
 @app.get("/api/clean-image")
+@app.get("/api/index/clean-image")
 @app.get("/api/index/api/clean-image")
 async def clean_image(p: str, seed: int = 42):
     """
