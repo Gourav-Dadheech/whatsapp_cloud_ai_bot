@@ -281,37 +281,60 @@ def check_creator_query(msg: str) -> str | None:
 
 
 def extract_image_prompt(msg: str) -> str | None:
-    """Detects if the user wants to generate an image, and extracts the visual prompt."""
+    """
+    Intelligently detects if the user wants to generate an image or drawing in English or Hinglish,
+    and extracts the clean visual prompt.
+    """
+    import re
     m = msg.strip().lower()
 
-    # Explicit command triggers
+    # 1. Explicit command triggers
     for pfx in ["/image", "/imagine", "/draw", "image:", "draw:", "imagine:"]:
         if m.startswith(pfx):
             prompt = msg.strip()[len(pfx):].strip()
             return prompt if prompt else None
 
-    # Natural language triggers
-    triggers = [
-        "generate an image of", "generate a picture of", "generate a photo of", "generate image of", "generate photo of",
-        "create an image of", "create a picture of", "create a photo of", "create image of",
-        "make an image of", "make a picture of", "make a photo of",
-        "draw an image of", "draw a picture of", "draw a photo of", "draw me a", "draw a",
-        "photo generate karo", "image generate karo", "photo bana kar do", "image bana do",
-        "photo bana do", "photo banao", "image banao", "tasveer banao", "chitra banao",
-        "picture banao", "can you draw", "can you generate an image of", "can you make an image of"
-    ]
+    # 2. English natural language regex patterns:
+    # Handles: 'create a image in which...', 'create an image of...', 'generate a picture where...',
+    #          'make a photo of...', 'draw a...', 'show me a picture of...', etc.
+    eng_pattern = r'^\s*(?:can you\s+)?(?:please\s+)?(?:create|generate|make|draw|render|show me|produce)\s+(?:(?:me\s+)?(?:an?|the)\s+)?(?:image|picture|photo|pic|photograph|drawing|illustration|wallpaper|render)\s+(?:of|in which|where|showing|with|depicting|having)?\s*(.*)$'
+    match = re.search(eng_pattern, m, re.IGNORECASE)
+    if match and match.group(1).strip():
+        start_idx = match.start(1)
+        extracted = msg[start_idx:].strip(" :,-")
+        if len(extracted) >= 2:
+            return extracted
 
-    for t in triggers:
-        if t in m:
-            idx = m.find(t)
-            extracted = msg[idx + len(t):].strip(" :,-")
-            if not extracted or len(extracted) < 2:
-                prefix_part = msg[:idx].strip()
-                for stopword in [" ki", " ka", " ke", " ek", " a"]:
-                    if prefix_part.lower().endswith(stopword):
-                        prefix_part = prefix_part[:-len(stopword)].strip()
-                extracted = prefix_part
-            return extracted if extracted else None
+    # 'draw me a...' or 'draw a...'
+    draw_match = re.search(r'^\s*(?:can you\s+)?(?:please\s+)?draw(?:\s+me)?\s+(?:an?|the)?\s*(.*)$', m, re.IGNORECASE)
+    if draw_match and draw_match.group(1).strip():
+        extracted = msg[draw_match.start(1):].strip(" :,-")
+        if len(extracted) >= 2:
+            return extracted
+
+    # 3. Hinglish & Hindi natural language triggers:
+    # Handles: 'photo banao...', 'photo bana do...', 'ek photo banao jisme...', 'laptop ki photo bana do', etc.
+    hinglish_verbs = [
+        "photo bana do", "photo banao", "photo banakar do", "photo generate karo", "photo bana kar do",
+        "image bana do", "image banao", "image banakar do", "image generate karo", "image bana kar do",
+        "picture bana do", "picture banao", "picture generate karo",
+        "tasveer bana do", "tasveer banao", "chitra bana do", "chitra banao"
+    ]
+    for hv in hinglish_verbs:
+        if hv in m:
+            idx = m.find(hv)
+            after = msg[idx + len(hv):].strip(" :,-")
+            before = msg[:idx].strip(" :,-")
+            for filler in ["ki", "ka", "ke", "jisme", "in which", "where", "ek"]:
+                if after.lower().startswith(filler + " "):
+                    after = after[len(filler):].strip(" :,-")
+            if len(after) >= 2:
+                return after
+            for stopword in [" ki", " ka", " ke", " ek", " a"]:
+                if before.lower().endswith(stopword):
+                    before = before[:-len(stopword)].strip()
+            if len(before) >= 2:
+                return before
 
     return None
 
@@ -333,23 +356,26 @@ async def generate_image_url(raw_prompt: str, base_url: str = "") -> tuple[str, 
             client = AsyncGroq(api_key=api_key)
             director_prompt = """You are an elite Lead Art Director and Visual Prompt Engineer specializing in generating ultra-high-definition, photorealistic imagery comparable to ChatGPT (DALL-E 3) and Google Gemini (Imagen 3).
 
-Your objective is to transform any user request (in English or Hinglish/Hindi) into a breathtaking, highly detailed visual prompt for state-of-the-art diffusion models.
+Your objective is to transform any user request (in English or Hinglish/Hindi) into a breathtaking, highly detailed visual prompt for state-of-the-art diffusion models (FLUX.1).
 
-CORE PRINCIPLES FOR ACCURACY & FLAWLESS FINISHING:
-1. SUBJECT INTEGRITY & BRAND DETAIL:
-   - If a specific brand, vehicle, or device is named (e.g. 'Lenovo LOQ laptop', 'Royal Enfield', 'iPhone', 'Nike Jordan', 'Sony camera'):
-     * NEVER use generic words like 'sleek metallic' that trick models into drawing Apple/MacBook designs!
-     * Affirm the authentic design: e.g. for gaming laptops: 'A chunky angular dark storm-grey gaming laptop with aggressive rear exhaust cooling vents, glowing multi-color RGB backlit keys, rugged textured chassis, and bold geometric LOQ logo on the lid'.
-     * NEVER include negative brand words (e.g. do NOT say 'not a macbook' or 'no apple', as diffusion text encoders will accidentally generate that brand).
-2. DYNAMIC ACTION & PHYSICAL REALISM (NO FLAT/ORANGE BACKGROUNDS):
-   - Never allow flat, plain, or monochrome backgrounds. Construct a rich, three-dimensional scene with physical interaction!
-   - If elements interact (e.g. 'coming out of lava', 'running on water', 'flying in storm'):
-     * Describe the fluid dynamics: thick viscous molten magma dripping from the edges, droplets freezing mid-splash, rising heat shimmer waves, glowing embers, swirling smoke plumes, and cracking obsidian basalt rocks.
-3. CINEMATIC FINISHING & LIGHTING:
-   - Detail the lighting: intense volumetric rim lighting, ambient occlusions, ray-traced reflections on dark surfaces, dramatic contrast, cinematic low-angle composition.
-   - Specify visual finish: 8K resolution, photorealistic Unreal Engine 5 render, octane lighting, razor-sharp focus on the primary subject.
-4. LANGUAGE & LENGTH:
-   - Output ONLY the expanded English visual prompt in 2-3 vivid, cohesive sentences. No conversational filler, no quotes."""
+CORE PRINCIPLES FOR ACCURACY & ZERO CONFUSION:
+1. SUBJECT-FIRST ARCHITECTURE (THE 80% RULE):
+   - The primary subject noun MUST appear within the first 5-8 words (e.g. 'Hero product shot of an open dark Lenovo LOQ gaming laptop with glowing RGB keyboard...').
+   - Keep 80% of the prompt focused directly on the subject, its physical build, geometry, and active state.
+2. PC & HARDWARE ACCURACY (ANTI-MACBOOK):
+   - For PC/Gaming laptops (Lenovo LOQ, Legion, ASUS ROG, Acer Predator, Dell Alienware, HP Omen, etc.):
+     * Depict the laptop OPEN: 'open dark storm-grey gaming laptop with illuminated vibrant screen, brightly glowing multi-color RGB backlit keyboard, thick rear exhaust cooling vents, angular gamer chassis'.
+     * NEVER use generic words like 'sleek slim aluminum' or 'minimalist metallic' that deceive diffusion models into rendering Apple MacBooks!
+     * NEVER mention negative words like 'not a macbook' or 'no apple'.
+3. NO UNREQUESTED GEOLOGY OR ROCKS (PREVENT MOUNTAIN / ROCK PAHAD):
+   - NEVER add words like 'obsidian basalt rocks', 'crusts', 'rock formations', 'rocky surfaces', 'boulders', or 'mountains' unless the user explicitly requested rocks or mountains.
+   - For liquid lava, water, or fire interaction: describe liquid fluid dynamics ('rising dramatically out of a pool of bubbling bright molten orange liquid lava, splashes of liquid fire, fiery lava droplets flying, glowing fiery embers, dark studio atmosphere').
+4. CINEMATIC FINISH & LIGHTING:
+   - Add dramatic lighting: intense volumetric rim lighting, vivid orange and crimson glow, dark high-contrast studio backdrop, ray-traced reflections on dark surfaces.
+   - Professional rendering tags: 'razor-sharp focus on the subject, 8k resolution, cinematic product photography, Unreal Engine 5 render'.
+5. LENGTH & CONCISENESS:
+   - Keep the prompt between 38-52 words in 1-2 vivid, punchy sentences. Diffusion models dilute attention when prompts are long essays.
+   - Output ONLY the expanded English visual prompt. No conversational filler, no explanations, no quotes."""
 
             resp = await asyncio.wait_for(
                 client.chat.completions.create(
@@ -359,7 +385,7 @@ CORE PRINCIPLES FOR ACCURACY & FLAWLESS FINISHING:
                         {"role": "user", "content": raw_prompt}
                     ],
                     temperature=0.7,
-                    max_tokens=180
+                    max_tokens=150
                 ),
                 timeout=6.0
             )
@@ -1036,22 +1062,34 @@ async def send_twilio_typing_indicator(message_sid: str):
     """Triggers the official native WhatsApp 'typing...' indicator on the user's phone via Twilio."""
     account_sid = os.getenv("TWILIO_ACCOUNT_SID")
     auth_token = os.getenv("TWILIO_AUTH_TOKEN")
-    if not account_sid or not auth_token or not message_sid:
+    if not account_sid or not auth_token:
+        print("Note: TWILIO_ACCOUNT_SID or TWILIO_AUTH_TOKEN not configured; skipping WhatsApp typing indicator.")
+        return
+    if not message_sid:
         return
 
     url = "https://messaging.twilio.com/v3/Indicators/Typing.json"
-    payload = {
-        "channel": "WHATSAPP",
+    data = {
+        "channel": "whatsapp",
         "messageId": message_sid
     }
     try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            await client.post(
+        async with httpx.AsyncClient(timeout=3.5) as client:
+            # 1. Standard Twilio form-encoded POST
+            resp = await client.post(
                 url,
                 auth=(account_sid, auth_token),
-                headers={"Content-Type": "application/json"},
-                json=payload
+                data=data
             )
+            if resp.status_code not in [200, 201, 204]:
+                # 2. Fallback to JSON payload if endpoint requires JSON
+                resp2 = await client.post(
+                    url,
+                    auth=(account_sid, auth_token),
+                    headers={"Content-Type": "application/json"},
+                    json=data
+                )
+                print(f"Twilio typing indicator response: {resp.status_code} -> fallback {resp2.status_code}")
     except Exception as e:
         print(f"Twilio typing indicator error: {e}")
 

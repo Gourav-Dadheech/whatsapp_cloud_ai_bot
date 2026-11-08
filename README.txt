@@ -142,8 +142,8 @@ GROQ_MODEL                - Preferred model (default: openai/gpt-oss-20b)
 BOT_NAME                  - Display name (default: Mitra)
 UPSTASH_REDIS_REST_URL    - Upstash Redis REST endpoint for memory
 UPSTASH_REDIS_REST_TOKEN  - Upstash Redis REST authorization token
-TWILIO_ACCOUNT_SID        - Twilio Account SID (for authenticated media)
-TWILIO_AUTH_TOKEN         - Twilio Auth Token (for authenticated media)
+TWILIO_ACCOUNT_SID        - Twilio Account SID (Required to display native WhatsApp '... typing' popup)
+TWILIO_AUTH_TOKEN         - Twilio Auth Token (Required to display native WhatsApp '... typing' popup)
 MAX_MEMORY_MESSAGES       - History turns retained per user (default: 50)
 
 --------------------------------------------------------------------------------
