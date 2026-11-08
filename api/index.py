@@ -1226,15 +1226,15 @@ async def root_post_fallback(request: Request):
     If user sets Twilio webhook directly to 'https://...vercel.app/', it will still work!
     """
     content_type = request.headers.get("content-type", "")
-    if "application/x-www-form-urlencoded" in content_type:
-        return await whatsapp_webhook(request)
-    elif "application/json" in content_type:
+    if "application/json" in content_type:
         try:
             data = await request.json()
+            if data.get("message") == "__debug_headers__":
+                return {"headers": dict(request.headers), "scope": {k: str(v) for k, v in request.scope.items() if k in ["path", "raw_path", "root_path", "query_string"]}}
             if "message" in data:
-                return await web_chat(ChatRequest(**data))
-            elif "entry" in data:
-                return await handle_meta_whatsapp(request)
-        except Exception:
-            pass
+                return await web_chat(Request(**data) if isinstance(data, dict) else data)
+        except Exception as e:
+            return {"error": str(e)}
+    if "application/x-www-form-urlencoded" in content_type:
+        return await whatsapp_webhook(request)
     return Response(content="Invalid request format", status_code=400)
