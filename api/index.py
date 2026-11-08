@@ -1021,7 +1021,7 @@ async def clean_image(p: str, seed: int = 42):
         raw_url = f"https://image.pollinations.ai/prompt/{encoded_p}?seed={seed}&nologo=true"
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as http_client:
+        async with httpx.AsyncClient(timeout=45.0) as http_client:
             resp = await http_client.get(raw_url, headers=req_headers)
             if resp.status_code != 200 and pollinations_key:
                 # Automatic graceful fallback to standard cluster
