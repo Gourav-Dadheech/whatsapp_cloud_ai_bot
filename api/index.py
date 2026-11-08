@@ -1006,7 +1006,12 @@ async def clean_image(p: str, seed: int = 42):
     import io
     from PIL import Image
 
-    pollinations_key = os.getenv("POLLINATIONS_API_KEY")
+    pollinations_key = (
+        os.getenv("POLLINATIONS_API_KEY")
+        or os.getenv("POLLINATION_API_KEY")
+        or os.getenv("POLLINATIONS_KEY")
+        or "sk_ugaj6lcl45XNAyyLAPZx1aB456oHneba"
+    )
     encoded_p = urllib.parse.quote(p)
     req_headers = {}
     if pollinations_key:
@@ -1018,6 +1023,11 @@ async def clean_image(p: str, seed: int = 42):
     try:
         async with httpx.AsyncClient(timeout=30.0) as http_client:
             resp = await http_client.get(raw_url, headers=req_headers)
+            if resp.status_code != 200 and pollinations_key:
+                # Automatic graceful fallback to standard cluster
+                fallback_url = f"https://image.pollinations.ai/prompt/{encoded_p}?seed={seed}&nologo=true"
+                resp = await http_client.get(fallback_url)
+
             if resp.status_code == 200:
                 im = Image.open(io.BytesIO(resp.content))
                 w, h = im.size
